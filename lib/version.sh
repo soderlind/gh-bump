@@ -61,12 +61,12 @@ bump_wp_plugin_version() {
     
     log_info "Updating version in $(basename "$plugin_file") to $new_version"
     
-    # Update plugin header
+    # Update plugin header (macOS-compatible sed with -E for extended regex)
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry_run "sed -i 's/Version:.*/Version: $new_version/' $plugin_file"
     else
-        sed -i.bak "s/^\( \* Version:\s*\)[0-9.]\+/\1$new_version/" "$plugin_file"
-        sed -i.bak "s/^\(Version:\s*\)[0-9.]\+/\1$new_version/" "$plugin_file"
+        sed -i.bak -E "s/^( \* Version:[[:space:]]*)[0-9.]+/\1$new_version/" "$plugin_file"
+        sed -i.bak -E "s/^(Version:[[:space:]]*)[0-9.]+/\1$new_version/" "$plugin_file"
         rm -f "${plugin_file}.bak"
     fi
     
@@ -74,16 +74,16 @@ bump_wp_plugin_version() {
     if [[ -f "$dir/readme.txt" ]]; then
         log_info "Updating Stable tag in readme.txt"
         if [[ "$DRY_RUN" != "true" ]]; then
-            sed -i.bak "s/^\(Stable tag:\s*\)[0-9.]\+/\1$new_version/" "$dir/readme.txt"
+            sed -i.bak -E "s/^(Stable tag:[[:space:]]*)[0-9.]+/\1$new_version/" "$dir/readme.txt"
             rm -f "$dir/readme.txt.bak"
         fi
     fi
     
     # Update constant if defined (e.g., PLUGIN_VERSION)
-    if grep -q "define.*VERSION.*[0-9]\+\.[0-9]\+" "$plugin_file" 2>/dev/null; then
+    if grep -qE "define.*VERSION.*[0-9]+\.[0-9]+" "$plugin_file" 2>/dev/null; then
         log_info "Updating version constant"
         if [[ "$DRY_RUN" != "true" ]]; then
-            sed -i.bak "s/\(define.*VERSION.*'\)[0-9.]\+\('.*\)/\1$new_version\2/" "$plugin_file"
+            sed -i.bak -E "s/(define.*VERSION.*')[0-9.]+(')/\1$new_version\2/" "$plugin_file"
             rm -f "${plugin_file}.bak"
         fi
     fi
@@ -104,7 +104,7 @@ bump_wp_theme_version() {
     log_info "Updating version in style.css to $new_version"
     
     if [[ "$DRY_RUN" != "true" ]]; then
-        sed -i.bak "s/^\(Version:\s*\)[0-9.]\+/\1$new_version/" "$dir/style.css"
+        sed -i.bak -E "s/^(Version:[[:space:]]*)[0-9.]+/\1$new_version/" "$dir/style.css"
         rm -f "$dir/style.css.bak"
     fi
     
@@ -151,13 +151,13 @@ bump_python_version() {
     if [[ -f "$dir/pyproject.toml" ]]; then
         log_info "Updating version in pyproject.toml to $new_version"
         if [[ "$DRY_RUN" != "true" ]]; then
-            sed -i.bak "s/^\(version\s*=\s*\"\)[^\"]\+\"/\1$new_version\"/" "$dir/pyproject.toml"
+            sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*\")[^\"]+\"/\1$new_version\"/" "$dir/pyproject.toml"
             rm -f "$dir/pyproject.toml.bak"
         fi
     elif [[ -f "$dir/setup.py" ]]; then
         log_info "Updating version in setup.py to $new_version"
         if [[ "$DRY_RUN" != "true" ]]; then
-            sed -i.bak "s/\(version\s*=\s*['\"][^'\"]*\)[0-9.]\+/\1$new_version/" "$dir/setup.py"
+            sed -i.bak -E "s/(version[[:space:]]*=[[:space:]]*['\"][^'\"]*)[0-9.]+/\1$new_version/" "$dir/setup.py"
             rm -f "$dir/setup.py.bak"
         fi
     fi

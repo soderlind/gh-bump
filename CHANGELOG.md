@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dry-run mode now shows build, version bump, and changelog steps
 - Version detection now works on macOS (replaced `grep -P` with portable `sed`)
 - Auto-merge "clean status" message no longer shown as warning
+- Version bump sed patterns now macOS-compatible (use `sed -E` + POSIX classes)
 
 ### Added
 
