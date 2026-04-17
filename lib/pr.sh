@@ -311,6 +311,20 @@ process_repo_for_pr() {
         fi
     else
         log_dry_run "apply_fixes $repo_dir"
+        
+        # Show what post-fix steps would happen
+        if [[ "$skip_build" != "true" ]]; then
+            log_dry_run "run_build $repo_dir"
+        fi
+        if [[ "$run_tests" == "true" ]]; then
+            log_dry_run "run_tests $repo_dir"
+        fi
+        if [[ "$bump_version" == "true" ]]; then
+            log_dry_run "bump_version $repo_dir $release_type"
+        fi
+        if [[ "$update_changelog" == "true" ]]; then
+            log_dry_run "update_changelog $repo_dir"
+        fi
     fi
     
     # Commit changes
