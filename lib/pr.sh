@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# pr.sh — Branch creation + PR creation
+
+set -euo pipefail
+
+# Source utils if not already loaded
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=utils.sh
+source "$SCRIPT_DIR/utils.sh" 2>/dev/null || true
+
+#######################################
+# Configuration
+#######################################
+
+BRANCH_PREFIX="${BRANCH_PREFIX:-gh-bump}"
+DEFAULT_BASE_BRANCH="${DEFAULT_BASE_BRANCH:-main}"
+
+#######################################
+# Branch management
+#######################################
+
+# Generate branch name
+# Format: gh-bump/YYYY-MM-DD or gh-bump/YYYY-MM-DD-N
+generate_branch_name() {
+    local date_suffix
+    date_suffix=$(date +"%Y-%m-%d")
+    echo "${BRANCH_PREFIX}/${date_suffix}"
+}
+
+# Get default branch for repo
+get_default_branch() {
+    local repo="$1"
+    gh api "repos/$repo" --jq '.default_branch' 2>/dev/null || echo "$DEFAULT_BASE_BRANCH"
+}
+
+# Create and checkout branch
+create_branch() {
+    local dir="${1:-.}"
+    local branch_name="${2:-$(generate_branch_name)}"
+    
+    cd "$dir"
+    
+    # Ensure we're on default branch and up to date
+    local default_branch
+    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+    
+    run_cmd git checkout "$default_branch" 2>&1 || true
+    run_cmd git pull --ff-only 2>&1 || true
+    
+    # Create new branch
+    run_cmd git checkout -b "$branch_name" 2>&1
+    
+    echo "$branch_name"
+}
+
+#######################################
+# Commit changes
+#######################################
+
+# Commit all changes with a standard message
+commit_changes() {
+    local dir="${1:-.}"
+    local message="${2:-chore(deps): fix security vulnerabilities}"
+    
+    cd "$dir"
+    
+    # Stage all changes
+    run_cmd git add -A
+    
+    # Check if there are changes to commit
+    if git diff --cached --quiet 2>/dev/null; then
+        log_warn "No changes to commit"
+        return 1
+    fi
+    
+    # Commit
+    run_cmd git commit -m "$message"
+    
+    return 0
+}
+
+# Push branch to remote
+push_branch() {
+    local dir="${1:-.}"
+    local branch="${2:-}"
+    
+    cd "$dir"
+    
+    if [[ -z "$branch" ]]; then
+        branch=$(git rev-parse --abbrev-ref HEAD)
+    fi
+    
+    run_cmd git push -u origin "$branch"
+    
+    return 0
+}
+
+#######################################
+# PR creation
+#######################################
+
+# Generate PR body from alert summary
+generate_pr_body() {
+    local repo="$1"
+    local alert_summary="${2:-}"
+    
+    local body="## Security Dependency Updates
+
+This PR fixes security vulnerabilities detected by Dependabot.
+
+### Changes
+- Updated vulnerable dependencies to secure versions
+- Applied \`npm audit fix\`, \`pip-audit\`, or equivalent for detected ecosystems
+
+### Automated by
+[gh-bump](https://github.com/soderlind/gh-bump) - Batch Dependabot fix automation
+
+---
+
+"
+
+    if [[ -n "$alert_summary" ]]; then
+        body+="### Alert Summary
+\`\`\`json
+$alert_summary
+\`\`\`
+"
+    fi
+
+    body+="
+> ⚠️ **Review carefully** before merging. Some updates may introduce breaking changes.
+"
+
+    echo "$body"
+}
+
+# Create a pull request
+# Returns: PR URL
+create_pr() {
+    local repo="$1"
+    local branch="$2"
+    local title="${3:-chore(deps): fix security vulnerabilities}"
+    local alert_summary="${4:-}"
+    local base_branch="${5:-}"
+    local auto_merge="${6:-false}"
+    
+    # Get default branch if not specified
+    if [[ -z "$base_branch" ]]; then
+        base_branch=$(get_default_branch "$repo")
+    fi
+    
+    local body
+    body=$(generate_pr_body "$repo" "$alert_summary")
+    
+    log_info "Creating PR: $title"
+    log_debug "  Repo: $repo"
+    log_debug "  Branch: $branch -> $base_branch"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry_run "gh pr create --repo '$repo' --head '$branch' --base '$base_branch' --title '$title'"
+        echo "https://github.com/$repo/pull/dry-run"
+        return 0
+    fi
+    
+    local pr_url
+    pr_url=$(gh pr create \
+        --repo "$repo" \
+        --head "$branch" \
+        --base "$base_branch" \
+        --title "$title" \
+        --body "$body" \
+        2>&1) || {
+        log_error "Failed to create PR: $pr_url"
+        return 1
+    }
+    
+    log_success "PR created: $pr_url"
+    
+    # Enable auto-merge if requested
+    if [[ "$auto_merge" == "true" ]]; then
+        log_info "Enabling auto-merge..."
+        gh pr merge "$pr_url" --auto --squash 2>&1 || {
+            log_warn "Could not enable auto-merge (branch protection may not allow it)"
+        }
+    fi
+    
+    echo "$pr_url"
+}
+
+#######################################
+# Full workflow
+#######################################
+
+# Clone repo, apply fixes, create PR
+# Returns: PR URL or empty if no changes
+process_repo_for_pr() {
+    local repo="$1"
+    local work_dir="${2:-/tmp/gh-bump}"
+    local auto_merge="${3:-false}"
+    local alert_summary="${4:-}"
+    
+    local repo_dir="$work_dir/${repo//\//_}"
+    
+    log_info "Processing: $repo"
+    log_to_repo "$repo" "Starting processing"
+    
+    # Clone repo
+    log_info "  Cloning..."
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry_run "gh repo clone $repo $repo_dir -- --depth=1"
+    else
+        rm -rf "$repo_dir"
+        gh repo clone "$repo" "$repo_dir" -- --depth=1 2>&1 || {
+            log_error "  Failed to clone $repo"
+            set_repo_state "$repo" "clone_failed"
+            return 1
+        }
+    fi
+    
+    # Create branch
+    local branch_name
+    branch_name=$(generate_branch_name)
+    log_info "  Creating branch: $branch_name"
+    
+    if [[ "$DRY_RUN" != "true" ]]; then
+        create_branch "$repo_dir" "$branch_name" || {
+            log_error "  Failed to create branch"
+            set_repo_state "$repo" "branch_failed"
+            return 1
+        }
+    else
+        log_dry_run "git checkout -b $branch_name"
+    fi
+    
+    # Apply fixes
+    log_info "  Applying fixes..."
+    # Source fix.sh for apply_fixes function
+    source "$SCRIPT_DIR/fix.sh"
+    
+    if [[ "$DRY_RUN" != "true" ]]; then
+        if ! apply_fixes "$repo_dir"; then
+            log_warn "  No fixes applied or no changes"
+        fi
+        
+        # Check for changes
+        if ! has_changes "$repo_dir"; then
+            log_info "  No changes after fix attempt"
+            set_repo_state "$repo" "no_changes"
+            rm -rf "$repo_dir"
+            return 0
+        fi
+    else
+        log_dry_run "apply_fixes $repo_dir"
+    fi
+    
+    # Commit changes
+    log_info "  Committing..."
+    if [[ "$DRY_RUN" != "true" ]]; then
+        commit_changes "$repo_dir" "chore(deps): fix security vulnerabilities
+
+Automated fix by gh-bump.
+Addresses Dependabot security alerts." || {
+            log_warn "  Nothing to commit"
+            set_repo_state "$repo" "no_changes"
+            return 0
+        }
+    else
+        log_dry_run "git commit -m 'chore(deps): fix security vulnerabilities'"
+    fi
+    
+    # Push branch
+    log_info "  Pushing..."
+    if [[ "$DRY_RUN" != "true" ]]; then
+        push_branch "$repo_dir" "$branch_name" || {
+            log_error "  Failed to push"
+            set_repo_state "$repo" "push_failed"
+            return 1
+        }
+    else
+        log_dry_run "git push -u origin $branch_name"
+    fi
+    
+    # Create PR
+    log_info "  Creating PR..."
+    local pr_url
+    pr_url=$(create_pr "$repo" "$branch_name" \
+        "chore(deps): fix security vulnerabilities" \
+        "$alert_summary" \
+        "" \
+        "$auto_merge") || {
+        log_error "  Failed to create PR"
+        set_repo_state "$repo" "pr_failed"
+        return 1
+    }
+    
+    # Extract PR number for rollback
+    local pr_number
+    pr_number=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+    
+    # Update state
+    local sha=""
+    if [[ "$DRY_RUN" != "true" ]]; then
+        sha=$(cd "$repo_dir" && git rev-parse HEAD)
+    fi
+    set_repo_state "$repo" "pr_created" "$pr_url" "$sha"
+    add_rollback_command "$repo" "$pr_number"
+    
+    log_to_repo "$repo" "PR created: $pr_url"
+    
+    # Cleanup
+    if [[ "$DRY_RUN" != "true" ]]; then
+        rm -rf "$repo_dir"
+    fi
+    
+    log_success "  Done: $pr_url"
+    echo "$pr_url"
+}

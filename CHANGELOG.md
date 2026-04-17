@@ -1,0 +1,56 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-04-17
+
+### Added
+
+- Initial release
+- **Discovery**: Enumerate repos with open Dependabot alerts
+  - Support for personal and organization repos
+  - Pattern filtering (`--pattern=owner/prefix`)
+  - Severity filtering (`--severity=critical|high|medium|low`)
+  - Result caching with TTL
+- **Fix application**: Ecosystem-aware dependency updates
+  - npm (`npm audit fix`)
+  - Yarn (v1 and v2+)
+  - pnpm (`pnpm audit --fix`)
+  - pip/Python (`pip-audit --fix`)
+  - Bundler/Ruby (`bundle update`)
+  - Cargo/Rust (`cargo update`)
+  - Composer/PHP (`composer update`)
+  - Go modules (`go get -u`)
+  - Maven (`mvn versions:use-latest-releases`)
+  - NuGet/dotnet (`dotnet-outdated`)
+- **PR workflow**: Automated branch, commit, and PR creation
+  - Standard commit message format
+  - PR body with alert summary
+  - Auto-merge option via GitHub's native feature
+- **CI integration**: Wait for checks before merge
+  - Configurable timeout
+  - Mergeability verification
+  - Squash merge with branch cleanup
+- **Safety features**:
+  - Dry-run mode
+  - State tracking for resume
+  - Per-repo logging
+  - Auto-generated rollback script
+- **CLI interface**:
+  - Commands: `discover`, `fix`, `merge`, `report`, `all`
+  - Comprehensive help (`--help`)
+
+### Technical
+
+- Pure bash implementation (bash 4.0+)
+- Dependencies: `gh` (GitHub CLI), `jq`
+- Modular library structure (`lib/*.sh`)
+
+---
+
+Assisted-by: Claude:claude-opus-4-20250514

@@ -1,0 +1,15 @@
+# gh-bump state and logs
+state/
+logs/
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Temp files
+*.tmp
+*.bak

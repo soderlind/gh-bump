@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+#
+# gh-bump — Batch Dependabot fix automation
+#
+# Discovers repos with Dependabot alerts, applies fixes,
+# creates PRs, and optionally auto-merges.
+#
+# Usage: gh-bump [options] [command]
+#
+# Commands:
+#   discover   Find repos with Dependabot alerts (default)
+#   fix        Apply fixes and create PRs
+#   merge      Process pending PRs (wait for CI, merge)
+#   report     Show summary report
+#
+# Options:
+#   --pattern=OWNER/PREFIX   Filter repos matching pattern
+#   --repo=OWNER/REPO        Process single repo only
+#   --org=ORG                Process all repos in org
+#   --severity=LEVEL         Filter alerts (critical|high|medium|low)
+#   --dry-run                Show what would happen
+#   --no-merge               Create PRs but don't auto-merge
+#   --timeout=MINUTES        CI wait timeout (default: 30)
+#   --parallel=N             Max concurrent repos (default: 5)
+#   --verbose                Enable debug output
+#   --help                   Show this help
+#
+
+set -euo pipefail
+
+#######################################
+# Setup
+#######################################
+
+# Get script directory (resolve symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
+
+# Source library files
+source "$LIB_DIR/utils.sh"
+source "$LIB_DIR/discover.sh"
+source "$LIB_DIR/fix.sh"
+source "$LIB_DIR/pr.sh"
+source "$LIB_DIR/merge.sh"
+
+#######################################
+# Defaults
+#######################################
+
+COMMAND="discover"
+PATTERN=""
+SINGLE_REPO=""
+ORG=""
+SEVERITY=""
+DRY_RUN="${DRY_RUN:-false}"
+NO_MERGE="${NO_MERGE:-false}"
+CI_TIMEOUT="${CI_TIMEOUT:-1800}"
+PARALLEL="${PARALLEL:-5}"
+VERBOSE="${VERBOSE:-false}"
+WORK_DIR="${WORK_DIR:-/tmp/gh-bump}"
+STATE_DIR="${STATE_DIR:-$(pwd)/state}"
+LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
+
+#######################################
+# Help
+#######################################
+
+show_help() {
+    cat << 'EOF'
+gh-bump — Batch Dependabot fix automation
+
+USAGE:
+    gh-bump [options] [command]
+
+COMMANDS:
+    discover    Find repos with Dependabot alerts (default)
+    fix         Apply fixes and create PRs
+    merge       Process pending PRs (wait for CI, merge)
+    report      Show summary report
+    all         Run full workflow: discover → fix → merge
+
+OPTIONS:
+    --pattern=OWNER/PREFIX   Filter repos matching glob pattern
+                             Example: --pattern=myorg/api-
+    --repo=OWNER/REPO        Process single repo only
+    --org=ORG                Process all repos in organization
+    --severity=LEVEL         Filter by severity: critical, high, medium, low
+    --dry-run                Show what would happen without making changes
+    --no-merge               Create PRs but skip auto-merge
+    --timeout=MINUTES        CI wait timeout (default: 30)
+    --parallel=N             Max concurrent repos (default: 5)
+    --verbose                Enable debug output
+    --help                   Show this help
+
+EXAMPLES:
+    # Discover all repos with alerts
+    gh-bump discover
+
+    # Dry-run on repos starting with "myorg/web-"
+    gh-bump --pattern=myorg/web- --dry-run fix
+
+    # Fix critical alerts only, no auto-merge
+    gh-bump --pattern=myorg/api- --severity=critical --no-merge fix
+
+    # Process a single repo
+    gh-bump --repo=owner/repo fix
+
+    # Full workflow for an org
+    gh-bump --org=mycompany all
+
+ENVIRONMENT:
+    DRY_RUN=true       Same as --dry-run
+    VERBOSE=true       Same as --verbose
+    CI_TIMEOUT=1800    CI wait timeout in seconds
+    WORK_DIR=/tmp/...  Working directory for clones
+
+STATE:
+    State files are stored in ./state/
+    Logs are stored in ./logs/
+    Re-running skips already-processed repos.
+
+EOF
+}
+
+#######################################
+# Argument parsing
+#######################################
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pattern=*)
+                PATTERN="${1#*=}"
+                shift
+                ;;
+            --repo=*)
+                SINGLE_REPO="${1#*=}"
+                shift
+                ;;
+            --org=*)
+                ORG="${1#*=}"
+                shift
+                ;;
+            --severity=*)
+                SEVERITY="${1#*=}"
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN="true"
+                shift
+                ;;
+            --no-merge)
+                NO_MERGE="true"
+                shift
+                ;;
+            --timeout=*)
+                CI_TIMEOUT="${1#*=}"
+                # Convert minutes to seconds if less than 60
+                if [[ "$CI_TIMEOUT" -lt 60 ]]; then
+                    CI_TIMEOUT=$((CI_TIMEOUT * 60))
+                fi
+                shift
+                ;;
+            --parallel=*)
+                PARALLEL="${1#*=}"
+                shift
+                ;;
+            --verbose|-v)
+                VERBOSE="true"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            discover|fix|merge|report|all)
+                COMMAND="$1"
+                shift
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                echo "Run 'gh-bump --help' for usage."
+                exit 1
+                ;;
+        esac
+    done
+}
+
+#######################################
+# Commands
+#######################################
+
+cmd_discover() {
+    log_info "=== Discovering repos with Dependabot alerts ==="
+    
+    if [[ -n "$SINGLE_REPO" ]]; then
+        # Single repo mode
+        log_info "Checking single repo: $SINGLE_REPO"
+        local summary
+        summary=$(get_alert_summary "$SINGLE_REPO" "$SEVERITY")
+        local count
+        count=$(echo "$summary" | jq '.alert_count')
+        
+        if [[ "$count" -gt 0 ]]; then
+            log_success "$SINGLE_REPO: $count alert(s)"
+            echo "$summary" | jq '.'
+        else
+            log_info "$SINGLE_REPO: no open alerts"
+        fi
+    else
+        # Multi-repo discovery
+        discover_repos_with_alerts "$PATTERN" "$ORG" "$SEVERITY" | jq '.'
+    fi
+}
+
+cmd_fix() {
+    log_info "=== Applying fixes and creating PRs ==="
+    
+    init_state_dir
+    set_run_id "bump-$(date +%Y%m%d-%H%M%S)"
+    
+    local repos_to_process=()
+    
+    if [[ -n "$SINGLE_REPO" ]]; then
+        repos_to_process+=("$SINGLE_REPO")
+    else
+        # Get repos from manifest or discover
+        local manifest_file="$STATE_DIR/repos.json"
+        
+        if [[ ! -f "$manifest_file" ]]; then
+            log_info "No manifest found, running discovery first..."
+            discover_repos_with_alerts "$PATTERN" "$ORG" "$SEVERITY" > /dev/null
+        fi
+        
+        mapfile -t repos_to_process < <(get_repos_from_manifest "$manifest_file")
+    fi
+    
+    if [[ ${#repos_to_process[@]} -eq 0 ]]; then
+        log_info "No repos to process"
+        return 0
+    fi
+    
+    log_info "Processing ${#repos_to_process[@]} repos..."
+    
+    local success=0
+    local failed=0
+    local skipped=0
+    
+    for repo in "${repos_to_process[@]}"; do
+        # Check if already processed
+        local current_state
+        current_state=$(get_repo_state "$repo")
+        
+        if [[ "$current_state" != "not_started" ]] && [[ "$DRY_RUN" != "true" ]]; then
+            log_info "Skipping $repo (already $current_state)"
+            ((skipped++))
+            continue
+        fi
+        
+        # Get alert summary for PR body
+        local alert_summary=""
+        if [[ -f "$STATE_DIR/repos.json" ]]; then
+            alert_summary=$(jq -r --arg repo "$repo" '.repos[] | select(.repo == $repo)' "$STATE_DIR/repos.json" || echo "")
+        fi
+        
+        # Process repo
+        set_repo_state "$repo" "in_progress"
+        
+        if process_repo_for_pr "$repo" "$WORK_DIR" "$([[ "$NO_MERGE" != "true" ]] && echo "true" || echo "false")" "$alert_summary"; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+        
+        echo ""
+    done
+    
+    log_info "Fix complete: $success PRs created, $failed failed, $skipped skipped"
+}
+
+cmd_merge() {
+    log_info "=== Processing pending PRs ==="
+    
+    if [[ "$NO_MERGE" == "true" ]]; then
+        log_info "Skipping merge (--no-merge specified)"
+        return 0
+    fi
+    
+    process_pending_prs "$STATE_DIR/operations.json" "false"
+}
+
+cmd_report() {
+    generate_report
+}
+
+cmd_all() {
+    log_info "=== Running full workflow ==="
+    echo ""
+    
+    cmd_discover
+    echo ""
+    
+    cmd_fix
+    echo ""
+    
+    if [[ "$NO_MERGE" != "true" ]]; then
+        cmd_merge
+        echo ""
+    fi
+    
+    cmd_report
+}
+
+#######################################
+# Main
+#######################################
+
+main() {
+    parse_args "$@"
+    
+    # Export for subprocesses
+    export DRY_RUN VERBOSE STATE_DIR LOG_DIR CI_TIMEOUT
+    
+    # Show dry-run notice
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo ""
+        log_warn "DRY-RUN MODE — No changes will be made"
+        echo ""
+    fi
+    
+    # Check prerequisites
+    check_prerequisites
+    
+    # Initialize directories
+    init_state_dir
+    
+    # Run command
+    case "$COMMAND" in
+        discover)
+            cmd_discover
+            ;;
+        fix)
+            cmd_fix
+            ;;
+        merge)
+            cmd_merge
+            ;;
+        report)
+            cmd_report
+            ;;
+        all)
+            cmd_all
+            ;;
+        *)
+            log_error "Unknown command: $COMMAND"
+            exit 1
+            ;;
+    esac
+}
+
+# Run main
+main "$@"
