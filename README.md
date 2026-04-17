@@ -2,6 +2,8 @@
 
 Batch Dependabot fix automation tool. Discovers repos with Dependabot security alerts, applies fixes using ecosystem-native tools, creates PRs, and optionally auto-merges after CI passes.
 
+> You use this on your own risk. Rollback should work, but no warranty.
+
 ## Features
 
 - **Multi-repo discovery**: Find all repos with open Dependabot alerts across personal and org repos
