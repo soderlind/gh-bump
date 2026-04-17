@@ -7,18 +7,36 @@
 		"gh-bump": "dist/cli.js"
 	},
 	"type": "module",
+	"files": [
+		"dist/",
+		"action.yml",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
+	],
 	"scripts": {
 		"build": "node esbuild.config.mjs",
 		"build:check": "tsc --noEmit",
+		"prepublishOnly": "npm run build",
 		"test": "node --test tests/**/*.test.ts"
 	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/soderlind/gh-bump.git"
 	},
-	"keywords": [],
-	"author": "",
-	"license": "ISC",
+	"keywords": [
+		"dependabot",
+		"security",
+		"github",
+		"ai",
+		"llm",
+		"dependency",
+		"vulnerability",
+		"github-action",
+		"cli"
+	],
+	"author": "Per Soderlind <per@soderlind.no>",
+	"license": "MIT",
 	"bugs": {
 		"url": "https://github.com/soderlind/gh-bump/issues"
 	},

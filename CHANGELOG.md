@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub Models: use Chat Completions API instead of Responses API (`client.chat()`)
+- GitHub Models: pre-fetch manifest files and skip tool use (free tier lacks function calling)
+- Dependabot alerts: use cursor-based pagination instead of `page` parameter
+- JSON parsing: handle nested code fences in LLM responses
+- Branch naming: strip `.lock` suffix to avoid invalid git refs
+
+### Added
+
+- Lockfile-to-manifest mapping (e.g. `package-lock.json` → `package.json`)
+- `prepublishOnly` script for npm publishing
+- `files` field, keywords, author, MIT license
+- Shebang in CLI bundle for `npx` support
+
 ## [1.0.0] - 2026-04-17
 
 ### Changed
