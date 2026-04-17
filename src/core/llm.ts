@@ -29,7 +29,7 @@ async function createModel(
     case "openai": {
       const { createOpenAI } = await import("@ai-sdk/openai");
       const client = createOpenAI({ apiKey });
-      return client(modelName ?? "gpt-4o");
+      return client.chat(modelName ?? "gpt-4o");
     }
     case "anthropic": {
       const { createAnthropic } = await import("@ai-sdk/anthropic");
@@ -43,7 +43,7 @@ async function createModel(
         apiKey,
         baseURL: "https://models.inference.ai.azure.com",
       });
-      return client(modelName ?? "gpt-4o");
+      return client.chat(modelName ?? "gpt-4o");
     }
     default:
       throw new Error(`Unsupported AI provider: ${provider}`);

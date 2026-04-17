@@ -9,7 +9,7 @@ export const SYSTEM_PROMPT = `You are a security dependency fix agent. Your job 
 ## How you work
 
 1. You receive details about one or more Dependabot security alerts (vulnerable package, severity, affected version range, patched version).
-2. You use the provided tools to read files from the repository to understand its structure and dependency setup.
+2. You read the manifest files provided (or use tools if available) to understand the dependency setup.
 3. You determine the minimal fix — typically updating a version constraint in a manifest file (package.json, pyproject.toml, composer.json, go.mod, Gemfile, Cargo.toml, pom.xml, etc.).
 4. You output the fixed file contents.
 
@@ -53,7 +53,8 @@ If no fix is possible, respond with:
  */
 export function buildAlertPrompt(
   repo: string,
-  alerts: DependabotAlert[]
+  alerts: DependabotAlert[],
+  prefetchedFiles?: Map<string, string>
 ): string {
   const alertDetails = alerts
     .map((a, i) => {
@@ -72,11 +73,24 @@ export function buildAlertPrompt(
     })
     .join("\n\n");
 
+  // Build file contents section if we have pre-fetched files
+  let fileContents = "";
+  if (prefetchedFiles && prefetchedFiles.size > 0) {
+    const sections = Array.from(prefetchedFiles.entries())
+      .map(([path, content]) => `#### \`${path}\`\n\`\`\`\n${content}\n\`\`\``)
+      .join("\n\n");
+    fileContents = `\n\n## Current file contents\n\n${sections}`;
+  }
+
+  const toolHint = prefetchedFiles
+    ? "The manifest files are provided below."
+    : "Use \`list_directory\` and \`read_file\` tools to read the manifest files.";
+
   return `Fix the following Dependabot security alert(s) in **${repo}**.
 
-Start by reading the manifest files referenced in the alerts to understand the current dependency setup. Use \`list_directory\` and \`read_file\` tools as needed.
+${toolHint}
 
-${alertDetails}
+${alertDetails}${fileContents}
 
 After analysis, respond with the JSON fix plan as described in your instructions.`;
 }

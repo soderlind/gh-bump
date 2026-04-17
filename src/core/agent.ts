@@ -32,11 +32,34 @@ function groupAlertsByManifest(
 }
 
 /**
+ * Map a lockfile path to its corresponding manifest file.
+ */
+function resolveManifestFromLockfile(lockfile: string): string | null {
+  const dir = lockfile.replace(/[^/]*$/, ""); // keep trailing slash or empty
+  const name = lockfile.split("/").pop() ?? "";
+
+  const mapping: Record<string, string> = {
+    "package-lock.json": "package.json",
+    "yarn.lock": "package.json",
+    "pnpm-lock.yaml": "package.json",
+    "Gemfile.lock": "Gemfile",
+    "Cargo.lock": "Cargo.toml",
+    "composer.lock": "composer.json",
+    "poetry.lock": "pyproject.toml",
+    "Pipfile.lock": "Pipfile",
+  };
+
+  const manifest = mapping[name];
+  return manifest ? `${dir}${manifest}` : null;
+}
+
+/**
  * Parse the LLM response JSON into a FixPlan.
  */
 function parseFixPlan(text: string): FixPlan | null {
-  // Extract JSON from markdown code fences if present
-  const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  // Extract JSON from markdown code fences if present.
+  // Use greedy match + last closing fence to handle nested fences in JSON values.
+  const jsonMatch = text.match(/```(?:json)?\s*\n([\s\S]*)\n```\s*$/);
   const jsonStr = jsonMatch ? jsonMatch[1] : text;
 
   try {
@@ -154,18 +177,57 @@ export async function runAgent(
   // 3. Group alerts by manifest and process each group
   const groups = groupAlertsByManifest(alertsToProcess);
 
+  // Determine if we should use tools (providers that support function calling)
+  const useTools = config.aiProvider !== "github";
+
   for (const [manifest, groupAlerts] of groups) {
     log.info(
       `\n  Manifest: ${manifest} (${groupAlerts.length} alert(s))`
     );
 
-    // Build prompt
-    const prompt = buildAlertPrompt(repo, groupAlerts);
+    // Pre-fetch manifest files so the LLM has context even without tools
+    const manifestPaths = new Set(
+      groupAlerts.map((a) => a.dependency.manifest_path)
+    );
+    const prefetchedFiles = new Map<string, string>();
 
-    // Create tools for the LLM
-    const tools = createAgentTools(gh, repo, defaultBranch);
+    for (const filePath of manifestPaths) {
+      // Skip lockfiles — agent shouldn't edit them
+      if (/lock|yarn\.lock|Gemfile\.lock|Cargo\.lock|composer\.lock|pnpm-lock/i.test(filePath)) {
+        log.debug(`  Skipping lockfile: ${filePath}`);
 
-    // Call LLM with tool-use loop
+        // Try to fetch the corresponding manifest instead
+        const manifestPath = resolveManifestFromLockfile(filePath);
+        if (manifestPath) {
+          try {
+            const content = await gh.getFileContent(repo, manifestPath, defaultBranch);
+            prefetchedFiles.set(manifestPath, content);
+            log.debug(`  Pre-fetched manifest: ${manifestPath}`);
+          } catch {
+            log.debug(`  Could not fetch manifest: ${manifestPath}`);
+          }
+        }
+        continue;
+      }
+
+      try {
+        const content = await gh.getFileContent(repo, filePath, defaultBranch);
+        prefetchedFiles.set(filePath, content);
+        log.debug(`  Pre-fetched: ${filePath}`);
+      } catch {
+        log.warn(`  Could not fetch: ${filePath}`);
+      }
+    }
+
+    // Build prompt with pre-fetched file contents
+    const prompt = buildAlertPrompt(repo, groupAlerts, prefetchedFiles);
+
+    // Create tools only for providers that support function calling
+    const tools = useTools
+      ? createAgentTools(gh, repo, defaultBranch)
+      : undefined;
+
+    // Call LLM
     let response: string;
     try {
       response = await llm.call({
@@ -219,7 +281,9 @@ export async function runAgent(
     }
 
     // 4. Create branch, commit, and PR
-    const branchName = `gh-bump/${new Date().toISOString().slice(0, 10)}/${manifest.replace(/[/\\]/g, "-")}`;
+    // Sanitize manifest path for use as branch name: replace slashes, strip .lock suffix (git disallows refs ending in .lock)
+    const safeName = manifest.replace(/[/\\]/g, "-").replace(/\.lock$/, "");
+    const branchName = `gh-bump/${new Date().toISOString().slice(0, 10)}/${safeName}`;
 
     try {
       await gh.createBranch(repo, branchName, baseSha);

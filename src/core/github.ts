@@ -45,22 +45,36 @@ export class GitHubClient {
     severity?: Severity
   ): Promise<DependabotAlert[]> {
     const { owner, repo } = this.split(nwo);
-    const params: Record<string, string> = { state: "open" };
+
+    const params: Record<string, string | number> = {
+      state: "open",
+      per_page: 100,
+    };
     if (severity) params.severity = severity;
 
     const alerts: DependabotAlert[] = [];
-    let page = 1;
+    let cursor: string | undefined;
 
     while (true) {
-      const { data } = await this.octokit.request(
+      const requestParams: { owner: string; repo: string; after?: string; [key: string]: string | number | undefined } = {
+        owner,
+        repo,
+        ...params,
+      };
+      if (cursor) requestParams.after = cursor;
+      const response = await this.octokit.request(
         "GET /repos/{owner}/{repo}/dependabot/alerts",
-        { owner, repo, ...params, per_page: 100, page }
+        requestParams
       );
 
+      const data = response.data;
       if (!Array.isArray(data) || data.length === 0) break;
       alerts.push(...(data as DependabotAlert[]));
       if (data.length < 100) break;
-      page++;
+
+      // Use the last alert number as cursor for next page
+      const last = data[data.length - 1] as DependabotAlert;
+      cursor = String(last.number);
     }
 
     return alerts;
