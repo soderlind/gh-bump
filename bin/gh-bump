@@ -304,10 +304,14 @@ cmd_fix() {
             continue
         fi
         
-        # Get alert summary for PR body
+        # Get alert summary for PR body (try cache first, then fetch)
         local alert_summary=""
         if [[ -f "$STATE_DIR/repos.json" ]]; then
-            alert_summary=$(jq -r --arg repo "$repo" '.repos[] | select(.repo == $repo)' "$STATE_DIR/repos.json" || echo "")
+            alert_summary=$(jq -r --arg repo "$repo" '.repos[] | select(.repo == $repo)' "$STATE_DIR/repos.json" 2>/dev/null || echo "")
+        fi
+        # Fallback to fetching directly (needed for single repo mode)
+        if [[ -z "$alert_summary" ]] || [[ "$alert_summary" == "null" ]]; then
+            alert_summary=$(get_alert_summary "$repo" "$SEVERITY")
         fi
         
         # Process repo

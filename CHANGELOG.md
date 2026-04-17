@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-merge "clean status" message no longer shown as warning
 - Version bump sed patterns now macOS-compatible (use `sed -E` + POSIX classes)
 - WordPress readme.txt changelog now uses plain text (no markdown backticks)
+- Single repo mode (`--repo=`) now properly fetches package info for changelog
 
 ### Added
 
