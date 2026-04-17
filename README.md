@@ -7,6 +7,10 @@ Batch Dependabot fix automation tool. Discovers repos with Dependabot security a
 - **Multi-repo discovery**: Find all repos with open Dependabot alerts across personal and org repos
 - **Pattern filtering**: Target specific repos using glob patterns (e.g., `myorg/api-*`)
 - **Ecosystem-aware fixes**: Automatically runs `npm audit fix`, `pip-audit`, `cargo update`, etc.
+- **Project type detection**: Detects WordPress plugins/themes, npm packages, Python, Go, etc.
+- **Build workflow**: Runs project-specific build commands after fixing dependencies
+- **Version bumping**: Automatically bumps version in project files (semver patch/minor/major)
+- **Changelog updates**: Adds security fix entries to CHANGELOG.md
 - **Safe PR workflow**: Creates PRs, waits for CI, checks mergeability before merge
 - **Dry-run mode**: Preview all actions without making changes
 - **State tracking**: Resume interrupted runs, skip already-processed repos
@@ -64,6 +68,11 @@ Commands:
 | `--no-merge` | Create PRs but skip auto-merge |
 | `--timeout=MINUTES` | CI wait timeout (default: 30) |
 | `--parallel=N` | Max concurrent repos (default: 5) |
+| `--bump-version` | Bump version in project files |
+| `--release-type=TYPE` | Version bump type: `patch`, `minor`, `major` (default: patch) |
+| `--skip-build` | Skip build step after fixing dependencies |
+| `--run-tests` | Run tests before creating PR |
+| `--skip-changelog` | Skip changelog updates |
 | `--verbose` | Enable debug output |
 
 ### Examples
@@ -78,11 +87,17 @@ gh-bump --pattern=myorg/web- --dry-run fix
 # Fix critical alerts only, no auto-merge
 gh-bump --pattern=myorg/api- --severity=critical --no-merge fix
 
+# Fix with version bump and changelog
+gh-bump --repo=owner/repo --bump-version fix
+
+# Fix with minor version bump
+gh-bump --repo=owner/repo --bump-version --release-type=minor fix
+
 # Process a single repo end-to-end
 gh-bump --repo=owner/repo all
 
-# Full workflow for an org
-gh-bump --org=mycompany all
+# Full workflow for an org with version bumping
+gh-bump --org=mycompany --bump-version all
 
 # Just merge pending PRs from previous run
 gh-bump merge
@@ -126,6 +141,21 @@ gh-bump report
 | Maven | `pom.xml` | `mvn versions:use-latest-releases` |
 | NuGet | `*.csproj` | `dotnet-outdated --upgrade` |
 
+## Project Type Detection
+
+gh-bump auto-detects project type to run the correct build workflow:
+
+| Type | Detection | Build | Version File |
+|------|-----------|-------|--------------|
+| WordPress Block Plugin | `@wordpress/scripts` in package.json | `npm run build` | Plugin header, package.json |
+| WordPress Plugin | `Plugin Name:` header in *.php | Optional npm/composer | Plugin header, readme.txt |
+| WordPress Theme | `Theme Name:` in style.css | Optional npm/composer | style.css |
+| npm Package | `package.json` present | `npm run build` | package.json |
+| Next.js App | `next.config.js/mjs/ts` | `npm run build` | package.json |
+| Python Package | `pyproject.toml` or `setup.py` | poetry/pipenv/pip install | pyproject.toml |
+| Composer Package | `composer.json` (non-WP) | `composer install` | composer.json |
+| Go Module | `go.mod` | `go build ./...` | git tag |
+
 ## GitHub Token Permissions
 
 For fine-grained PAT, enable:
@@ -154,6 +184,10 @@ For fine-grained PAT, enable:
 | `STATE_DIR` | `./state` | State file directory |
 | `LOG_DIR` | `./logs` | Log file directory |
 | `RATE_LIMIT_DELAY` | `1` | Seconds between API call bursts |
+| `BUMP_VERSION` | `false` | Same as `--bump-version` |
+| `RELEASE_TYPE` | `patch` | Version bump type |
+| `SKIP_BUILD` | `false` | Same as `--skip-build` |
+| `UPDATE_CHANGELOG` | `true` | Update changelog (set `false` for `--skip-changelog`) |
 
 ## Contributing
 

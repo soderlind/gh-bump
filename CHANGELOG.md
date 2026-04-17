@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-17
+
+### Added
+
+- **Project type detection**: Auto-detect repository type for appropriate workflows
+  - WordPress Block Plugin (with @wordpress/scripts)
+  - WordPress Plugin (standard PHP plugins)
+  - WordPress Theme
+  - npm Package
+  - Next.js App
+  - Python Package (poetry/pipenv/pip)
+  - Composer Package
+  - Go Module
+- **Build workflow**: Run project-specific build commands after fixing deps
+  - `npm install` + `npm run build` for JS projects
+  - `composer install` for PHP
+  - `poetry/pipenv/pip install` for Python
+  - `go build` for Go
+- **Version bumping**: Automatic semver version increments
+  - WordPress plugin/theme headers
+  - package.json
+  - pyproject.toml
+  - composer.json
+  - New CLI flags: `--bump-version`, `--release-type=patch|minor|major`
+- **Changelog updates**: Auto-add security fix entries
+  - Supports Keep a Changelog format
+  - WordPress readme.txt changelog section
+  - New CLI flag: `--skip-changelog`
+- **Test execution**: Optional test run before PR creation
+  - New CLI flag: `--run-tests`
+- **Skip build option**: Skip build step when not needed
+  - New CLI flag: `--skip-build`
+
+### Changed
+
+- PR workflow now includes project detection, build, and optional version bump
+- Logging improvements for post-fix workflow steps
+
 ## [0.1.0] - 2026-04-17
 
 ### Added

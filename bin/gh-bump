@@ -22,6 +22,11 @@
 #   --no-merge               Create PRs but don't auto-merge
 #   --timeout=MINUTES        CI wait timeout (default: 30)
 #   --parallel=N             Max concurrent repos (default: 5)
+#   --bump-version           Bump version in project files
+#   --release-type=TYPE      Version bump type (patch|minor|major)
+#   --skip-build             Skip build step after fixing
+#   --run-tests              Run tests before creating PR
+#   --skip-changelog         Skip changelog updates
 #   --verbose                Enable debug output
 #   --help                   Show this help
 #
@@ -44,6 +49,10 @@ LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
 source "$LIB_DIR/utils.sh"
 source "$LIB_DIR/discover.sh"
 source "$LIB_DIR/fix.sh"
+source "$LIB_DIR/detect.sh"
+source "$LIB_DIR/build.sh"
+source "$LIB_DIR/version.sh"
+source "$LIB_DIR/changelog.sh"
 source "$LIB_DIR/pr.sh"
 source "$LIB_DIR/merge.sh"
 
@@ -62,6 +71,11 @@ CI_TIMEOUT="${CI_TIMEOUT:-1800}"
 PARALLEL="${PARALLEL:-5}"
 VERBOSE="${VERBOSE:-false}"
 WORK_DIR="${WORK_DIR:-/tmp/gh-bump}"
+BUMP_VERSION="${BUMP_VERSION:-false}"
+RELEASE_TYPE="${RELEASE_TYPE:-patch}"
+SKIP_BUILD="${SKIP_BUILD:-false}"
+RUN_TESTS="${RUN_TESTS:-false}"
+UPDATE_CHANGELOG="${UPDATE_CHANGELOG:-true}"
 
 #######################################
 # Help
@@ -91,6 +105,11 @@ OPTIONS:
     --no-merge               Create PRs but skip auto-merge
     --timeout=MINUTES        CI wait timeout (default: 30)
     --parallel=N             Max concurrent repos (default: 5)
+    --bump-version           Bump version in project files
+    --release-type=TYPE      Version bump type: patch, minor, major (default: patch)
+    --skip-build             Skip build step after fixing dependencies
+    --run-tests              Run tests before creating PR
+    --skip-changelog         Skip changelog updates
     --verbose                Enable debug output
     --help                   Show this help
 
@@ -165,6 +184,26 @@ parse_args() {
                 ;;
             --parallel=*)
                 PARALLEL="${1#*=}"
+                shift
+                ;;
+            --bump-version)
+                BUMP_VERSION="true"
+                shift
+                ;;
+            --release-type=*)
+                RELEASE_TYPE="${1#*=}"
+                shift
+                ;;
+            --skip-build)
+                SKIP_BUILD="true"
+                shift
+                ;;
+            --run-tests)
+                RUN_TESTS="true"
+                shift
+                ;;
+            --skip-changelog)
+                UPDATE_CHANGELOG="false"
                 shift
                 ;;
             --verbose|-v)
@@ -268,7 +307,9 @@ cmd_fix() {
         # Process repo
         set_repo_state "$repo" "in_progress"
         
-        if process_repo_for_pr "$repo" "$WORK_DIR" "$([[ "$NO_MERGE" != "true" ]] && echo "true" || echo "false")" "$alert_summary"; then
+        local auto_merge="$([[ "$NO_MERGE" != "true" ]] && echo "true" || echo "false")"
+        if process_repo_for_pr "$repo" "$WORK_DIR" "$auto_merge" "$alert_summary" \
+            "$BUMP_VERSION" "$SKIP_BUILD" "$RUN_TESTS" "$UPDATE_CHANGELOG" "$RELEASE_TYPE"; then
             ((success++))
         else
             ((failed++))
@@ -322,6 +363,7 @@ main() {
     
     # Export for subprocesses
     export DRY_RUN VERBOSE STATE_DIR LOG_DIR CI_TIMEOUT
+    export BUMP_VERSION RELEASE_TYPE SKIP_BUILD RUN_TESTS UPDATE_CHANGELOG
     
     # Show dry-run notice
     if [[ "$DRY_RUN" == "true" ]]; then

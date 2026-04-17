@@ -7,6 +7,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=utils.sh
 source "$SCRIPT_DIR/utils.sh" 2>/dev/null || true
+# shellcheck source=detect.sh
+source "$SCRIPT_DIR/detect.sh" 2>/dev/null || true
+# shellcheck source=build.sh
+source "$SCRIPT_DIR/build.sh" 2>/dev/null || true
+# shellcheck source=version.sh
+source "$SCRIPT_DIR/version.sh" 2>/dev/null || true
+# shellcheck source=changelog.sh
+source "$SCRIPT_DIR/changelog.sh" 2>/dev/null || true
 
 #######################################
 # Configuration
@@ -198,6 +206,11 @@ process_repo_for_pr() {
     local work_dir="${2:-/tmp/gh-bump}"
     local auto_merge="${3:-false}"
     local alert_summary="${4:-}"
+    local bump_version="${5:-false}"
+    local skip_build="${6:-false}"
+    local run_tests="${7:-false}"
+    local update_changelog="${8:-true}"
+    local release_type="${9:-patch}"
     
     local repo_dir="$work_dir/${repo//\//_}"
     
@@ -254,6 +267,47 @@ process_repo_for_pr() {
             set_repo_state "$repo" "no_changes"
             rm -rf "$repo_dir"
             return 0
+        fi
+        
+        # Post-fix workflow
+        local project_type new_version
+        project_type=$(detect_project_type "$repo_dir")
+        log_info "  Detected: $(get_project_type_name "$project_type")"
+        
+        # Run build if not skipped
+        if [[ "$skip_build" != "true" ]]; then
+            log_info "  Running build..."
+            if ! run_build "$repo_dir"; then
+                log_warn "  Build failed, continuing anyway"
+            fi
+        fi
+        
+        # Run tests if requested
+        if [[ "$run_tests" == "true" ]]; then
+            log_info "  Running tests..."
+            if ! run_tests "$repo_dir"; then
+                log_warn "  Tests failed, continuing anyway"
+            fi
+        fi
+        
+        # Extract package names for changelog
+        local pkg_array=()
+        if [[ -n "$packages" ]]; then
+            IFS=',' read -ra pkg_array <<< "$packages"
+        fi
+        
+        # Bump version if requested
+        if [[ "$bump_version" == "true" ]]; then
+            new_version=$(bump_version "$repo_dir" "$release_type")
+            log_info "  New version: $new_version"
+        else
+            new_version=$(get_project_version "$repo_dir")
+        fi
+        
+        # Update changelog
+        if [[ "$update_changelog" == "true" ]] && [[ ${#pkg_array[@]} -gt 0 ]]; then
+            local ver="${new_version:-unreleased}"
+            update_changelog "$repo_dir" "$ver" "${pkg_array[@]}"
         fi
     else
         log_dry_run "apply_fixes $repo_dir"
