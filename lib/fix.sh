@@ -78,24 +78,42 @@ detect_ecosystem() {
 #######################################
 
 # Apply security fixes for npm
+# Optional second arg: comma-separated list of packages to update
 fix_npm() {
     local dir="${1:-.}"
-    
-    log_info "Running npm audit fix..."
+    local packages="${2:-}"
     
     cd "$dir"
     
-    # First, show what would change
+    # If specific packages provided (from Dependabot), update those first
+    if [[ -n "$packages" ]]; then
+        log_info "Updating specific packages from Dependabot: $packages"
+        local pkg_array
+        IFS=',' read -ra pkg_array <<< "$packages"
+        for pkg in "${pkg_array[@]}"; do
+            pkg=$(echo "$pkg" | xargs)  # trim whitespace
+            log_info "  Updating: $pkg"
+            run_cmd npm update "$pkg" 2>&1 || true
+        done
+    fi
+    
+    # Then try npm audit fix
+    log_info "Running npm audit fix..."
     if npm audit --json 2>/dev/null | jq -e '.vulnerabilities | length > 0' > /dev/null; then
         run_cmd npm audit fix --force 2>&1 || {
-            log_warn "npm audit fix had issues, trying without --force"
+            log_warn "npm audit fix --force had issues, trying without --force"
             run_cmd npm audit fix 2>&1 || true
         }
-        return 0
     else
-        log_info "No npm vulnerabilities to fix"
-        return 1
+        # npm audit found nothing, but Dependabot might have
+        # Try a general update of nested dependencies
+        if [[ -z "$packages" ]]; then
+            log_info "No npm audit vulnerabilities, trying npm update..."
+            run_cmd npm update 2>&1 || true
+        fi
     fi
+    
+    return 0
 }
 
 # Apply security fixes for yarn
@@ -266,9 +284,12 @@ fix_nuget() {
 #######################################
 
 # Apply fixes for all detected ecosystems
+# Args: dir [packages]
+# packages: comma-separated list from Dependabot alerts
 # Returns 0 if any changes made, 1 if no changes
 apply_fixes() {
     local dir="${1:-.}"
+    local packages="${2:-}"
     local changes_made=false
     
     log_info "Detecting ecosystems in $dir..."
@@ -287,7 +308,7 @@ apply_fixes() {
         log_info "Applying fixes for: $ecosystem"
         
         case "$ecosystem" in
-            npm)     fix_npm "$dir" && changes_made=true ;;
+            npm)     fix_npm "$dir" "$packages" && changes_made=true ;;
             yarn)    fix_yarn "$dir" && changes_made=true ;;
             pnpm)    fix_pnpm "$dir" && changes_made=true ;;
             pip)     fix_pip "$dir" && changes_made=true ;;

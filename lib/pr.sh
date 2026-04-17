@@ -237,8 +237,14 @@ process_repo_for_pr() {
     # Source fix.sh for apply_fixes function
     source "$SCRIPT_DIR/fix.sh"
     
+    # Extract package names from alert summary for targeted updates
+    local packages=""
+    if [[ -n "$alert_summary" ]]; then
+        packages=$(echo "$alert_summary" | jq -r '.packages // [] | join(",")' 2>/dev/null || echo "")
+    fi
+    
     if [[ "$DRY_RUN" != "true" ]]; then
-        if ! apply_fixes "$repo_dir"; then
+        if ! apply_fixes "$repo_dir" "$packages"; then
             log_warn "  No fixes applied or no changes"
         fi
         

@@ -36,6 +36,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 
+# Set directory paths BEFORE sourcing libs (they use these)
+STATE_DIR="${STATE_DIR:-$(pwd)/state}"
+LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
+
 # Source library files
 source "$LIB_DIR/utils.sh"
 source "$LIB_DIR/discover.sh"
@@ -58,8 +62,6 @@ CI_TIMEOUT="${CI_TIMEOUT:-1800}"
 PARALLEL="${PARALLEL:-5}"
 VERBOSE="${VERBOSE:-false}"
 WORK_DIR="${WORK_DIR:-/tmp/gh-bump}"
-STATE_DIR="${STATE_DIR:-$(pwd)/state}"
-LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
 
 #######################################
 # Help
