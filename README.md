@@ -1,242 +1,184 @@
 # gh-bump
 
-Batch Dependabot fix automation tool. Discovers repos with Dependabot security alerts, applies fixes using ecosystem-native tools, creates PRs, and optionally auto-merges after CI passes.
+AI-powered Dependabot security fix agent. Uses an LLM to analyze your code and fix dependency vulnerabilities — no hardcoded patterns, works with any ecosystem. Runs as a CLI or GitHub Action.
 
-> You use this on your own risk. Rollback should work, but no warranty.
+> **Use at your own risk.** Always review generated PRs before merging.
 
-## Features
+## How it works
 
-- **Multi-repo discovery**: Find all repos with open Dependabot alerts across personal and org repos
-- **Pattern filtering**: Target specific repos using glob patterns (e.g., `myorg/api-*`)
-- **Ecosystem-aware fixes**: Automatically runs `npm audit fix`, `pip-audit`, `cargo update`, etc.
-- **Project type detection**: Detects WordPress plugins/themes, npm packages, Python, Go, etc.
-- **Build workflow**: Runs project-specific build commands after fixing dependencies
-- **Version bumping**: Automatically bumps version in project files (semver patch/minor/major)
-- **Changelog updates**: Adds security fix entries to CHANGELOG.md
-- **Safe PR workflow**: Creates PRs, waits for CI, checks mergeability before merge
-- **Dry-run mode**: Preview all actions without making changes
-- **State tracking**: Resume interrupted runs, skip already-processed repos
-- **Rollback support**: Auto-generates rollback script for reverting changes
+1. Fetches open Dependabot alerts via GitHub API
+2. Reads your manifest files (package.json, pyproject.toml, go.mod, etc.) through the GitHub Contents API
+3. Sends the alert details + file contents to an LLM, which determines the minimal fix
+4. Commits the fix via the Git tree/blob API (no clone needed)
+5. Creates a PR with an AI-generated description
+6. Optionally merges, tags, and creates a release
+
+Because the fix logic is driven by an LLM rather than hardcoded patterns, gh-bump works with **any ecosystem** — npm, pip, Go, Rust, Ruby, PHP, Maven, NuGet, and anything else the LLM understands.
 
 ## Requirements
 
-- [GitHub CLI](https://cli.github.com/) (`gh`) - authenticated
-- [jq](https://stedolan.github.io/jq/) - JSON processing
-- Bash 4.0+
+- Node.js 20+
+- A GitHub token with `repo` + `security_events` scope
+- An AI API key (OpenAI or Anthropic)
+
+## CLI Usage
 
 ```bash
-# macOS
-brew install gh jq
+# Install
+npm install -g gh-bump
 
-# Authenticate
-gh auth login
-```
-
-## Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/soderlind/gh-bump.git
-cd gh-bump
-
-# Add to PATH (optional)
-export PATH="$PATH:$(pwd)/bin"
-```
-
-## Usage
-
-### Commands
-
-```bash
-gh-bump [options] [command]
-
-Commands:
-  discover   Find repos with Dependabot alerts (default)
-  fix        Apply fixes and create PRs
-  merge      Process pending PRs (wait for CI, merge)
-  report     Show summary report
-  all        Run full workflow: discover → fix → merge
+# Or run directly
+npx gh-bump --repo=owner/repo --dry-run
 ```
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--pattern=OWNER/PREFIX` | Filter repos matching glob pattern |
-| `--repo=OWNER/REPO` | Process single repo only |
-| `--org=ORG` | Process all repos in organization |
-| `--severity=LEVEL` | Filter alerts: `critical`, `high`, `medium`, `low` |
-| `--dry-run` | Show what would happen without changes |
-| `--no-merge` | Create PRs but skip auto-merge |
-| `--timeout=MINUTES` | CI wait timeout (default: 30) |
-| `--parallel=N` | Max concurrent repos (default: 5) |
-| `--bump-version` | Bump version in project files |
-| `--release-type=TYPE` | Version bump type: `patch`, `minor`, `major` (default: patch) |
-| `--skip-build` | Skip build step after fixing dependencies |
-| `--run-tests` | Run tests before creating PR |
-| `--skip-changelog` | Skip changelog updates |
+| `--repo=OWNER/REPO` | Target repository (required) |
+| `--severity=LEVEL` | Minimum severity: `critical`, `high`, `medium`, `low` |
+| `--dry-run` | Preview changes without applying them |
+| `--merge` | Merge PR after creation |
+| `--merge-method=METHOD` | Merge method: `squash` (default), `merge`, `rebase` |
+| `--release` | Create GitHub release after merge (implies `--merge`) |
+| `--tag` | Create git tag after merge (implies `--merge`) |
+| `--provider=PROVIDER` | AI provider: `github` (default), `openai`, `anthropic` |
+| `--model=MODEL` | AI model override |
+| `--max-alerts=N` | Max alerts to process per run (default: 10) |
+| `--max-llm-calls=N` | Max LLM calls per run, cost guardrail (default: 20) |
 | `--verbose` | Enable debug output |
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub token (required) |
+| `AI_API_KEY` | AI provider API key (not needed for `github` provider) |
+| `OPENAI_API_KEY` | OpenAI API key (fallback if `AI_API_KEY` not set) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (fallback if `AI_API_KEY` not set) |
 
 ### Examples
 
 ```bash
-# Discover all repos with Dependabot alerts
-gh-bump discover
+# Dry-run: see what would be fixed
+gh-bump --repo=myorg/myapp --dry-run
 
-# Dry-run on repos starting with "myorg/web-"
-gh-bump --pattern=myorg/web- --dry-run fix
+# Fix critical alerts and merge
+gh-bump --repo=myorg/myapp --severity=critical --merge
 
-# Fix critical alerts only, no auto-merge
-gh-bump --pattern=myorg/api- --severity=critical --no-merge fix
+# Fix, merge, tag, and release
+gh-bump --repo=myorg/myapp --merge --release --tag
 
-# Fix with version bump and changelog
-gh-bump --repo=owner/repo --bump-version fix
+# Use GitHub Models (no separate AI key needed)
+gh-bump --repo=myorg/myapp --provider=github
 
-# Fix with minor version bump
-gh-bump --repo=owner/repo --bump-version --release-type=minor fix
-
-# Process a single repo end-to-end
-gh-bump --repo=owner/repo all
-
-# Full workflow for an org with version bumping
-gh-bump --org=mycompany --bump-version all
-
-# Just merge pending PRs from previous run
-gh-bump merge
-
-# Show summary report
-gh-bump report
+# Use Anthropic instead of OpenAI
+gh-bump --repo=myorg/myapp --provider=anthropic --model=claude-sonnet-4-20250514
 ```
 
-## Workflow
+## GitHub Action
 
-1. **Discovery** — Enumerates repos and queries Dependabot API for open alerts
-2. **Fix** — Clones each repo, detects ecosystem, runs native fix command
-3. **PR Creation** — Commits changes, pushes branch, creates PR with alert summary
-4. **CI Wait** — Polls PR status until all checks complete
-5. **Merge** — Verifies mergeability, squash-merges, deletes branch
+Use gh-bump as a scheduled GitHub Action to automatically fix Dependabot alerts:
 
-### State Files
+```yaml
+name: Fix Dependabot Alerts
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+  workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: read
+
+jobs:
+  fix-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fix Dependabot alerts
+        uses: soderlind/gh-bump@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          ai-provider: github
+          severity: high
+          merge: true
 ```
-./state/
-├── repos.json        # Cached repo + alert manifest
-├── operations.json   # Per-repo status tracking
-└── rollback.sh       # Auto-generated revert commands
 
-./logs/
-└── {repo_name}.log   # Per-repo operation log
-```
+### Action inputs
 
-## Supported Ecosystems
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `github-token` | yes | `${{ github.token }}` | GitHub token |
+| `ai-provider` | no | `github` | AI provider: `github`, `openai`, or `anthropic` |
+| `ai-api-key` | no | — | API key (not needed for `github` provider) |
+| `ai-model` | no | — | Model name override |
+| `repo` | no | current repo | Target repository |
+| `severity` | no | all | Minimum severity |
+| `dry-run` | no | `false` | Preview mode |
+| `merge` | no | `false` | Merge PRs after creation |
+| `merge-method` | no | `squash` | Merge method |
+| `release` | no | `false` | Create release (implies merge) |
+| `tag` | no | `false` | Create tag (implies merge) |
+| `max-alerts` | no | `10` | Max alerts per run |
+| `max-llm-calls` | no | `20` | Cost guardrail |
 
-| Ecosystem | Lock File | Fix Command |
-|-----------|-----------|-------------|
-| npm | `package-lock.json` | `npm audit fix` |
-| Yarn | `yarn.lock` | `yarn upgrade` |
-| pnpm | `pnpm-lock.yaml` | `pnpm audit --fix` |
-| pip | `requirements.txt` | `pip-audit --fix` |
-| Bundler | `Gemfile.lock` | `bundle update` |
-| Cargo | `Cargo.lock` | `cargo update` |
-| Composer | `composer.lock` | `composer update` |
-| Go | `go.sum` | `go get -u && go mod tidy` |
-| Maven | `pom.xml` | `mvn versions:use-latest-releases` |
-| NuGet | `*.csproj` | `dotnet-outdated --upgrade` |
+### Action outputs
 
-## Project Type Detection
-
-gh-bump auto-detects project type to run the correct build workflow:
-
-| Type | Detection | Build | Version File |
-|------|-----------|-------|--------------|
-| WordPress Block Plugin | `@wordpress/scripts` in package.json | `npm run build` | Plugin header, package.json |
-| WordPress Plugin | `Plugin Name:` header in *.php | Optional npm/composer | Plugin header, readme.txt |
-| WordPress Theme | `Theme Name:` in style.css | Optional npm/composer | style.css |
-| npm Package | `package.json` present | `npm run build` | package.json |
-| Next.js App | `next.config.js/mjs/ts` | `npm run build` | package.json |
-| Python Package | `pyproject.toml` or `setup.py` | poetry/pipenv/pip install | pyproject.toml |
-| Composer Package | `composer.json` (non-WP) | `composer install` | composer.json |
-| Go Module | `go.mod` | `go build ./...` | git tag |
+| Output | Description |
+|--------|-------------|
+| `prs-created` | Number of PRs created |
+| `alerts-fixed` | Number of alerts processed |
+| `pr-urls` | JSON array of PR URLs |
+| `summary` | Human-readable summary |
 
 ## GitHub Token Permissions
 
 For fine-grained PAT, enable:
-- **Repository access**: All repositories (or specific repos)
-- **Permissions**:
-  - `Dependabot alerts`: Read
-  - `Contents`: Read and write
-  - `Pull requests`: Read and write
-  - `Metadata`: Read
+- **Dependabot alerts**: Read
+- **Contents**: Read and write
+- **Pull requests**: Read and write
+- **Metadata**: Read
 
-## Safety
+## Architecture
 
-- **Dry-run first**: Always test with `--dry-run` before running for real
-- **Single repo test**: Use `--repo=owner/test-repo` to validate on one repo
-- **Review PRs**: Even with auto-merge, review the generated PRs
-- **Rollback script**: If needed, run `./state/rollback.sh` to close PRs
+```
+src/
+  cli.ts              # CLI entrypoint
+  action.ts           # GitHub Action entrypoint
+  core/
+    agent.ts          # LLM orchestration loop
+    github.ts         # GitHub API client (alerts, files, commits, PRs)
+    llm.ts            # Provider-agnostic LLM wrapper (Vercel AI SDK)
+    prompts.ts        # System/user prompt templates
+    types.ts          # Shared types
+    log.ts            # Logging utilities
+action.yml            # GitHub Action metadata
+```
 
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DRY_RUN` | `false` | Same as `--dry-run` |
-| `VERBOSE` | `false` | Same as `--verbose` |
-| `CI_TIMEOUT` | `1800` | CI wait timeout in seconds |
-| `WORK_DIR` | `/tmp/gh-bump` | Working directory for clones |
-| `STATE_DIR` | `./state` | State file directory |
-| `LOG_DIR` | `./logs` | Log file directory |
-| `RATE_LIMIT_DELAY` | `1` | Seconds between API call bursts |
-| `BUMP_VERSION` | `false` | Same as `--bump-version` |
-| `RELEASE_TYPE` | `patch` | Version bump type |
-| `SKIP_BUILD` | `false` | Same as `--skip-build` |
-| `UPDATE_CHANGELOG` | `true` | Update changelog (set `false` for `--skip-changelog`) |
+Key design decisions:
+- **No git clone**: All file reads and writes via GitHub API (Contents + tree/blob). Fast, no git binary needed.
+- **LLM-driven fixes**: No hardcoded ecosystem patterns. The LLM reads manifests and determines the minimal change.
+- **Manifest-only changes**: The agent updates version constraints in manifest files. Lockfile regeneration is left to CI or Dependabot.
+- **Provider-agnostic**: Supports OpenAI and Anthropic via the Vercel AI SDK. Easy to add more providers.
 
 ## FAQ
 
-### Does `--bump-version` work with the `all` command?
+### What ecosystems does it support?
 
-Yes. Global flags apply throughout the workflow:
-```bash
-gh-bump --bump-version all           # patch bump
-gh-bump --bump-version --release-type=minor all
-```
+Any ecosystem the LLM understands. It reads your actual manifest files and determines the fix, rather than running ecosystem-specific commands. This means npm, pip, Go, Rust, Ruby, PHP, Java, C#, and more all work without special handling.
 
-### Can I use `--org=` for a personal account?
+### Does it update lockfiles?
 
-Yes. `--org=soderlind` works for both organizations and personal accounts — it uses `gh repo list OWNER` which handles both.
+No. The agent updates version constraints in manifest files (package.json, pyproject.toml, etc.). Lockfile regeneration should be handled by your CI pipeline or Dependabot.
 
-### Is the `/` required in `--pattern=`?
+### How much does the AI cost per run?
 
-No. Pattern does prefix matching:
-- `--pattern=soderlind` → all repos owned by soderlind
-- `--pattern=soderlind/wp-` → only repos starting with `wp-`
+Typically $0.01–0.10 per alert, depending on the model and file sizes. Use `--max-llm-calls` as a cost guardrail.
 
-### Why is my repo being skipped?
+### Can I use it without AI?
 
-State tracking prevents duplicate processing. If a repo was already processed, it shows "Skipping (already pr_created)". To re-run:
-```bash
-rm -rf state logs
-gh-bump --repo=owner/repo all
-```
-
-### Will it work without Dependabot alerts?
-
-No. gh-bump is alert-driven — no alerts means nothing to fix. Version bumping only happens as part of the fix workflow.
-
-### Does `fix` auto-merge PRs?
-
-Yes, via GitHub's native auto-merge (`gh pr merge --auto`). However, this requires:
-1. Repository Settings → "Allow auto-merge" enabled
-2. Branch protection rules on the default branch
-
-If your repo doesn't have these, use `gh-bump all` which includes a manual merge step.
-
-### For WordPress plugins, what files get updated?
-
-When `--bump-version` is used:
-- **Plugin PHP file**: `Version:` header + version constant
-- **readme.txt**: `Stable tag:` + changelog section under `== Changelog ==`
-- **package.json**: `version` field (if present)
+No. The LLM is core to how gh-bump works — it replaces all the hardcoded ecosystem detection and fix patterns from v1.
 
 ## Contributing
 
