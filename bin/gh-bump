@@ -68,6 +68,8 @@ SEVERITY=""
 DRY_RUN="${DRY_RUN:-false}"
 NO_MERGE="${NO_MERGE:-false}"
 MERGE_NOW="${MERGE_NOW:-false}"
+CREATE_RELEASE="${CREATE_RELEASE:-false}"
+CREATE_TAG="${CREATE_TAG:-false}"
 CI_TIMEOUT="${CI_TIMEOUT:-1800}"
 PARALLEL="${PARALLEL:-5}"
 VERBOSE="${VERBOSE:-false}"
@@ -105,6 +107,8 @@ OPTIONS:
     --dry-run                Show what would happen without making changes
     --no-merge               Create PRs but skip auto-merge
     --merge-now              Merge PR immediately (don't wait for auto-merge)
+    --release                Create GitHub release after merge (requires --merge-now)
+    --tag                    Create git tag after merge (requires --merge-now)
     --timeout=MINUTES        CI wait timeout (default: 30)
     --parallel=N             Max concurrent repos (default: 5)
     --bump-version           Bump version in project files
@@ -178,6 +182,14 @@ parse_args() {
                 ;;
             --merge-now)
                 MERGE_NOW="true"
+                shift
+                ;;
+            --release)
+                CREATE_RELEASE="true"
+                shift
+                ;;
+            --tag)
+                CREATE_TAG="true"
                 shift
                 ;;
             --timeout=*)
@@ -319,7 +331,8 @@ cmd_fix() {
         
         local auto_merge="$([[ "$NO_MERGE" != "true" ]] && echo "true" || echo "false")"
         if process_repo_for_pr "$repo" "$WORK_DIR" "$auto_merge" "$alert_summary" \
-            "$BUMP_VERSION" "$SKIP_BUILD" "$RUN_TESTS" "$UPDATE_CHANGELOG" "$RELEASE_TYPE" "$MERGE_NOW"; then
+            "$BUMP_VERSION" "$SKIP_BUILD" "$RUN_TESTS" "$UPDATE_CHANGELOG" "$RELEASE_TYPE" "$MERGE_NOW" \
+            "$CREATE_RELEASE" "$CREATE_TAG"; then
             ((success++))
         else
             ((failed++))

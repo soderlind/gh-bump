@@ -152,6 +152,9 @@ create_pr() {
     local base_branch="${5:-}"
     local auto_merge="${6:-false}"
     local merge_now="${7:-false}"
+    local new_version="${8:-}"
+    local create_release="${9:-false}"
+    local create_tag="${10:-false}"
     
     # Get default branch if not specified
     if [[ -z "$base_branch" ]]; then
@@ -185,6 +188,9 @@ create_pr() {
     
     log_success "PR created: $pr_url"
     
+    # Track if merge was successful for release/tag creation
+    local merge_successful=false
+    
     # Merge handling
     if [[ "$merge_now" == "true" ]]; then
         # Immediate merge (no waiting for auto-merge)
@@ -195,6 +201,52 @@ create_pr() {
         }
         if [[ -z "${merge_output:-}" ]] || [[ "$merge_output" == *"Merged"* ]] || [[ "$merge_output" == *"merged"* ]]; then
             log_success "PR merged successfully"
+            merge_successful=true
+        fi
+        
+        # Create release/tag after successful merge
+        if [[ "$merge_successful" == "true" ]] && [[ -n "$new_version" ]]; then
+            # Strip 'v' prefix if present (we want 1.0.0, not v1.0.0)
+            local version_tag="${new_version#v}"
+            
+            # Create tag if requested
+            if [[ "$create_tag" == "true" ]]; then
+                log_info "Creating tag: $version_tag"
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    log_dry_run "gh api repos/$repo/git/refs -f ref=refs/tags/$version_tag -f sha=..."
+                else
+                    # Get the latest commit SHA from the default branch after merge
+                    local default_branch
+                    default_branch=$(get_default_branch "$repo")
+                    local sha
+                    sha=$(gh api "repos/$repo/git/ref/heads/$default_branch" --jq '.object.sha' 2>/dev/null || echo "")
+                    
+                    if [[ -n "$sha" ]]; then
+                        gh api "repos/$repo/git/refs" \
+                            -f "ref=refs/tags/$version_tag" \
+                            -f "sha=$sha" >/dev/null 2>&1 && \
+                            log_success "Tag created: $version_tag" || \
+                            log_warn "Could not create tag: $version_tag"
+                    else
+                        log_warn "Could not get SHA for tag creation"
+                    fi
+                fi
+            fi
+            
+            # Create release if requested
+            if [[ "$create_release" == "true" ]]; then
+                log_info "Creating release: $version_tag"
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    log_dry_run "gh release create $version_tag --repo $repo --title $version_tag --generate-notes"
+                else
+                    gh release create "$version_tag" \
+                        --repo "$repo" \
+                        --title "$version_tag" \
+                        --generate-notes >/dev/null 2>&1 && \
+                        log_success "Release created: $version_tag" || \
+                        log_warn "Could not create release: $version_tag"
+                fi
+            fi
         fi
     elif [[ "$auto_merge" == "true" ]]; then
         # Enable auto-merge (requires repo settings)
@@ -209,6 +261,11 @@ create_pr() {
                 log_info "Tip: Use --merge-now for immediate merge, or enable auto-merge in repo settings"
             fi
         }
+        
+        # Note: release/tag creation requires --merge-now since auto-merge is async
+        if [[ "$create_release" == "true" ]] || [[ "$create_tag" == "true" ]]; then
+            log_info "Note: --release and --tag require --merge-now to work immediately"
+        fi
     fi
     
     echo "$pr_url"
@@ -231,6 +288,8 @@ process_repo_for_pr() {
     local update_changelog="${8:-true}"
     local release_type="${9:-patch}"
     local merge_now="${10:-false}"
+    local create_release="${11:-false}"
+    local create_tag="${12:-false}"
     
     local repo_dir="$work_dir/${repo//\//_}"
     
@@ -382,7 +441,10 @@ Addresses Dependabot security alerts." || {
         "$alert_summary" \
         "" \
         "$auto_merge" \
-        "$merge_now") || {
+        "$merge_now" \
+        "${new_version:-}" \
+        "$create_release" \
+        "$create_tag") || {
         log_error "  Failed to create PR"
         set_repo_state "$repo" "pr_failed"
         return 1
