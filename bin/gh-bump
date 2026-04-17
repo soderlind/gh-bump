@@ -67,6 +67,7 @@ ORG=""
 SEVERITY=""
 DRY_RUN="${DRY_RUN:-false}"
 NO_MERGE="${NO_MERGE:-false}"
+MERGE_NOW="${MERGE_NOW:-false}"
 CI_TIMEOUT="${CI_TIMEOUT:-1800}"
 PARALLEL="${PARALLEL:-5}"
 VERBOSE="${VERBOSE:-false}"
@@ -103,6 +104,7 @@ OPTIONS:
     --severity=LEVEL         Filter by severity: critical, high, medium, low
     --dry-run                Show what would happen without making changes
     --no-merge               Create PRs but skip auto-merge
+    --merge-now              Merge PR immediately (don't wait for auto-merge)
     --timeout=MINUTES        CI wait timeout (default: 30)
     --parallel=N             Max concurrent repos (default: 5)
     --bump-version           Bump version in project files
@@ -172,6 +174,10 @@ parse_args() {
                 ;;
             --no-merge)
                 NO_MERGE="true"
+                shift
+                ;;
+            --merge-now)
+                MERGE_NOW="true"
                 shift
                 ;;
             --timeout=*)
@@ -309,7 +315,7 @@ cmd_fix() {
         
         local auto_merge="$([[ "$NO_MERGE" != "true" ]] && echo "true" || echo "false")"
         if process_repo_for_pr "$repo" "$WORK_DIR" "$auto_merge" "$alert_summary" \
-            "$BUMP_VERSION" "$SKIP_BUILD" "$RUN_TESTS" "$UPDATE_CHANGELOG" "$RELEASE_TYPE"; then
+            "$BUMP_VERSION" "$SKIP_BUILD" "$RUN_TESTS" "$UPDATE_CHANGELOG" "$RELEASE_TYPE" "$MERGE_NOW"; then
             ((success++))
         else
             ((failed++))

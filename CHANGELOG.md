@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--merge-now` flag: Merge PR immediately instead of enabling auto-merge
+  - Useful when repo doesn't have auto-merge enabled in settings
+  - Uses `gh pr merge --squash --delete-branch`
+
 ### Fixed
 
 - Dry-run mode now shows build, version bump, and changelog steps
 - Version detection now works on macOS (replaced `grep -P` with portable `sed`)
 - Auto-merge "clean status" message no longer shown as warning
 - Version bump sed patterns now macOS-compatible (use `sed -E` + POSIX classes)
+- WordPress readme.txt changelog now uses plain text (no markdown backticks)
 
 ### Added
 

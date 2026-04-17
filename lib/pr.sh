@@ -151,6 +151,7 @@ create_pr() {
     local alert_summary="${4:-}"
     local base_branch="${5:-}"
     local auto_merge="${6:-false}"
+    local merge_now="${7:-false}"
     
     # Get default branch if not specified
     if [[ -z "$base_branch" ]]; then
@@ -184,8 +185,19 @@ create_pr() {
     
     log_success "PR created: $pr_url"
     
-    # Enable auto-merge if requested
-    if [[ "$auto_merge" == "true" ]]; then
+    # Merge handling
+    if [[ "$merge_now" == "true" ]]; then
+        # Immediate merge (no waiting for auto-merge)
+        log_info "Merging PR immediately..."
+        local merge_output
+        merge_output=$(gh pr merge "$pr_url" --squash --delete-branch 2>&1) || {
+            log_warn "Could not merge: $merge_output"
+        }
+        if [[ -z "${merge_output:-}" ]] || [[ "$merge_output" == *"Merged"* ]] || [[ "$merge_output" == *"merged"* ]]; then
+            log_success "PR merged successfully"
+        fi
+    elif [[ "$auto_merge" == "true" ]]; then
+        # Enable auto-merge (requires repo settings)
         log_info "Enabling auto-merge..."
         local merge_output
         merge_output=$(gh pr merge "$pr_url" --auto --squash 2>&1) || {
@@ -194,6 +206,7 @@ create_pr() {
                 log_info "PR is ready to merge (passed checks)"
             else
                 log_warn "Could not enable auto-merge: $merge_output"
+                log_info "Tip: Use --merge-now for immediate merge, or enable auto-merge in repo settings"
             fi
         }
     fi
@@ -217,6 +230,7 @@ process_repo_for_pr() {
     local run_tests="${7:-false}"
     local update_changelog="${8:-true}"
     local release_type="${9:-patch}"
+    local merge_now="${10:-false}"
     
     local repo_dir="$work_dir/${repo//\//_}"
     
@@ -367,7 +381,8 @@ Addresses Dependabot security alerts." || {
         "chore(deps): fix security vulnerabilities" \
         "$alert_summary" \
         "" \
-        "$auto_merge") || {
+        "$auto_merge" \
+        "$merge_now") || {
         log_error "  Failed to create PR"
         set_repo_state "$repo" "pr_failed"
         return 1

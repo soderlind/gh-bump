@@ -182,6 +182,13 @@ prepend_changelog_entry() {
 # WordPress readme.txt Changelog
 #######################################
 
+# Format changes text for WordPress readme.txt (no markdown)
+format_wp_changelog_text() {
+    local changes="$1"
+    # Remove markdown backticks and convert to plain text
+    echo "$changes" | sed -E 's/`([^`]+)`/\1/g'
+}
+
 # Update changelog section in WordPress readme.txt
 update_wp_readme_changelog() {
     local dir="$1"
@@ -200,6 +207,10 @@ update_wp_readme_changelog() {
         return 0
     fi
     
+    # Convert markdown to plain text for WordPress
+    local wp_changes
+    wp_changes=$(format_wp_changelog_text "$changes")
+    
     local tmp_file
     tmp_file=$(mktemp)
     
@@ -214,7 +225,7 @@ update_wp_readme_changelog() {
             # Add new entry after heading
             echo ""
             echo "= $version ="
-            echo "$changes"
+            echo "$wp_changes"
             entry_added=true
         fi
     done < "$readme" > "$tmp_file"
