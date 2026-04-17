@@ -194,17 +194,18 @@ get_project_version() {
         "$PROJECT_TYPE_WORDPRESS_PLUGIN"|"$PROJECT_TYPE_WORDPRESS_BLOCK")
             local plugin_file
             plugin_file=$(find_wp_plugin_file "$dir")
-            grep -oP "Version:\s*\K[0-9.]+" "$plugin_file" 2>/dev/null | head -1
+            # macOS-compatible: use sed instead of grep -P
+            sed -n 's/.*Version:[[:space:]]*\([0-9.]*\).*/\1/p' "$plugin_file" 2>/dev/null | head -1
             ;;
         "$PROJECT_TYPE_WORDPRESS_THEME")
-            grep -oP "Version:\s*\K[0-9.]+" "$dir/style.css" 2>/dev/null | head -1
+            sed -n 's/.*Version:[[:space:]]*\([0-9.]*\).*/\1/p' "$dir/style.css" 2>/dev/null | head -1
             ;;
         "$PROJECT_TYPE_NPM_PACKAGE"|"$PROJECT_TYPE_NEXTJS_APP")
             jq -r '.version // ""' "$dir/package.json" 2>/dev/null
             ;;
         "$PROJECT_TYPE_PYTHON_PACKAGE")
             if [[ -f "$dir/pyproject.toml" ]]; then
-                grep -oP 'version\s*=\s*"\K[^"]+' "$dir/pyproject.toml" 2>/dev/null | head -1
+                sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$dir/pyproject.toml" 2>/dev/null | head -1
             fi
             ;;
         "$PROJECT_TYPE_COMPOSER_PACKAGE")

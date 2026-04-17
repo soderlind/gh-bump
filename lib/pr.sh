@@ -187,8 +187,14 @@ create_pr() {
     # Enable auto-merge if requested
     if [[ "$auto_merge" == "true" ]]; then
         log_info "Enabling auto-merge..."
-        gh pr merge "$pr_url" --auto --squash 2>&1 || {
-            log_warn "Could not enable auto-merge (branch protection may not allow it)"
+        local merge_output
+        merge_output=$(gh pr merge "$pr_url" --auto --squash 2>&1) || {
+            # "clean status" means PR is ready to merge - not an error
+            if [[ "$merge_output" == *"clean status"* ]]; then
+                log_info "PR is ready to merge (passed checks)"
+            else
+                log_warn "Could not enable auto-merge: $merge_output"
+            fi
         }
     fi
     

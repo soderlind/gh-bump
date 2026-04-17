@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Dry-run mode now shows build, version bump, and changelog steps
+- Version detection now works on macOS (replaced `grep -P` with portable `sed`)
+- Auto-merge "clean status" message no longer shown as warning
 
 ### Added
 
