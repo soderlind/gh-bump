@@ -1,0 +1,76 @@
+name: "gh-bump"
+description: "AI-powered Dependabot security fix agent. Analyzes code with LLM, applies fixes via GitHub API, creates PRs."
+author: "Per Soderlind"
+
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  github-token:
+    description: "GitHub token with repo and security_events scope"
+    required: true
+    default: ${{ github.token }}
+  ai-provider:
+    description: "AI provider: openai, anthropic, or github (uses github-token, no separate key needed)"
+    required: false
+    default: "github"
+  ai-api-key:
+    description: "API key for the AI provider (not needed for github provider)"
+    required: false
+  ai-model:
+    description: "AI model name override"
+    required: false
+  repo:
+    description: "Target repository (owner/repo). Defaults to current repo."
+    required: false
+    default: ${{ github.repository }}
+  severity:
+    description: "Minimum alert severity to process: critical, high, medium, low"
+    required: false
+  dry-run:
+    description: "Preview mode — no changes will be made"
+    required: false
+    default: "false"
+  merge:
+    description: "Merge PRs after creation"
+    required: false
+    default: "false"
+  merge-method:
+    description: "Merge method: squash, merge, rebase"
+    required: false
+    default: "squash"
+  release:
+    description: "Create GitHub release after merge (implies merge)"
+    required: false
+    default: "false"
+  tag:
+    description: "Create git tag after merge (implies merge)"
+    required: false
+    default: "false"
+  max-alerts:
+    description: "Maximum alerts to process per run"
+    required: false
+    default: "10"
+  max-llm-calls:
+    description: "Maximum LLM calls per run (cost guardrail)"
+    required: false
+    default: "20"
+  verbose:
+    description: "Enable debug output"
+    required: false
+    default: "false"
+
+outputs:
+  prs-created:
+    description: "Number of PRs created"
+  alerts-fixed:
+    description: "Number of alerts processed"
+  pr-urls:
+    description: "JSON array of PR URLs"
+  summary:
+    description: "Human-readable summary"
+
+runs:
+  using: "node20"
+  main: "dist/action.js"

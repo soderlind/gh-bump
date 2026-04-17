@@ -7,28 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-17
+
+### Changed
+
+- **Complete rewrite from bash to TypeScript**
+- Fix logic now driven by LLM instead of hardcoded ecosystem patterns
+- Works with any ecosystem the LLM understands (npm, pip, Go, Rust, Ruby, PHP, Java, C#, etc.)
+- No git clone required — all file operations via GitHub API (Contents + tree/blob)
+- Simplified CLI: single `--repo` flag, no subcommands
+
 ### Added
 
-- `--merge-now` flag: Merge PR immediately instead of enabling auto-merge
-  - Useful when repo doesn't have auto-merge enabled in settings
-  - Uses `gh pr merge --squash --delete-branch`
-- `--release` flag: Create GitHub release after merge (implies `--merge-now`)
-  - Uses the bumped version number without 'v' prefix (e.g., `1.0.0`)
-  - Auto-generates release notes from commits
-- `--tag` flag: Create git tag after merge (implies `--merge-now`)
-  - Uses the bumped version number without 'v' prefix (e.g., `1.0.0`)
-- FAQ section in README covering common questions
+- **AI-powered fix engine**: LLM analyzes alert details + manifest files to determine minimal fix
+- **Provider-agnostic LLM support**: OpenAI and Anthropic via Vercel AI SDK
+- **GitHub Action**: Reusable `action.yml` for scheduled Dependabot fix automation
+- **Cost guardrails**: `--max-alerts` and `--max-llm-calls` flags to cap AI usage
+- **No-clone commits**: Git tree/blob API for creating commits without cloning
+- **LLM tool use**: Agent can read files and list directories to explore repo structure
 
-### Fixed
+### Removed
 
-- Dry-run mode now shows build, version bump, and changelog steps
-- Version detection now works on macOS (replaced `grep -P` with portable `sed`)
-- Auto-merge "clean status" message no longer shown as warning
-- Version bump sed patterns now macOS-compatible (use `sed -E` + POSIX classes)
-- WordPress readme.txt changelog now uses plain text (no markdown backticks)
-- Single repo mode (`--repo=`) now properly fetches package info for changelog
+- Hardcoded ecosystem detection (npm, pip, cargo, etc.) — replaced by LLM
+- Project type detection (WordPress, Next.js, etc.) — replaced by LLM
+- Build/test workflow — no longer needed (LLM edits manifests only)
+- Version bumping heuristics — replaced by LLM
+- Changelog generation heuristics — replaced by LLM
+- Multi-repo discovery/batch processing (v1 feature, may return later)
+- State tracking and rollback scripts (simplified architecture)
+- Dependencies on `gh` CLI and `jq`
 
-## [0.2.0] - 2026-04-17
+## [1.1.0] - 2026-04-17 (bash)
 
 ### Added
 

@@ -1,0 +1,40 @@
+{
+	"name": "gh-bump",
+	"version": "2.0.0",
+	"description": "AI-powered Dependabot security fix agent. Analyzes code with LLM, applies fixes via GitHub API, creates PRs. Works as CLI and GitHub Action.",
+	"main": "dist/cli.js",
+	"bin": {
+		"gh-bump": "dist/cli.js"
+	},
+	"type": "module",
+	"scripts": {
+		"build": "node esbuild.config.mjs",
+		"build:check": "tsc --noEmit",
+		"test": "node --test tests/**/*.test.ts"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/soderlind/gh-bump.git"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/soderlind/gh-bump/issues"
+	},
+	"homepage": "https://github.com/soderlind/gh-bump#readme",
+	"dependencies": {
+		"@actions/core": "^3.0.0",
+		"@actions/github": "^9.1.0",
+		"@ai-sdk/anthropic": "^3.0.71",
+		"@ai-sdk/openai": "^3.0.53",
+		"@octokit/rest": "^22.0.1",
+		"ai": "^6.0.168",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"esbuild": "^0.28.0",
+		"typescript": "^6.0.3"
+	}
+}
