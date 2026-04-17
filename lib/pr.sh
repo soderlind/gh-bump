@@ -262,10 +262,7 @@ create_pr() {
             fi
         }
         
-        # Note: release/tag creation requires --merge-now since auto-merge is async
-        if [[ "$create_release" == "true" ]] || [[ "$create_tag" == "true" ]]; then
-            log_info "Note: --release and --tag require --merge-now to work immediately"
-        fi
+
     fi
     
     echo "$pr_url"

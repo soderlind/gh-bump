@@ -107,8 +107,8 @@ OPTIONS:
     --dry-run                Show what would happen without making changes
     --no-merge               Create PRs but skip auto-merge
     --merge-now              Merge PR immediately (don't wait for auto-merge)
-    --release                Create GitHub release after merge (requires --merge-now)
-    --tag                    Create git tag after merge (requires --merge-now)
+    --release                Create GitHub release after merge (implies --merge-now)
+    --tag                    Create git tag after merge (implies --merge-now)
     --timeout=MINUTES        CI wait timeout (default: 30)
     --parallel=N             Max concurrent repos (default: 5)
     --bump-version           Bump version in project files
@@ -383,6 +383,11 @@ cmd_all() {
 
 main() {
     parse_args "$@"
+    
+    # --release and --tag imply --merge-now
+    if [[ "$CREATE_RELEASE" == "true" ]] || [[ "$CREATE_TAG" == "true" ]]; then
+        MERGE_NOW="true"
+    fi
     
     # Export for subprocesses
     export DRY_RUN VERBOSE STATE_DIR LOG_DIR CI_TIMEOUT

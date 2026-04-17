@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--merge-now` flag: Merge PR immediately instead of enabling auto-merge
   - Useful when repo doesn't have auto-merge enabled in settings
   - Uses `gh pr merge --squash --delete-branch`
-- `--release` flag: Create GitHub release after merge (requires `--merge-now`)
+- `--release` flag: Create GitHub release after merge (implies `--merge-now`)
   - Uses the bumped version number without 'v' prefix (e.g., `1.0.0`)
   - Auto-generates release notes from commits
-- `--tag` flag: Create git tag after merge (requires `--merge-now`)
+- `--tag` flag: Create git tag after merge (implies `--merge-now`)
   - Uses the bumped version number without 'v' prefix (e.g., `1.0.0`)
 - FAQ section in README covering common questions
 
