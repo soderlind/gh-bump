@@ -189,6 +189,53 @@ For fine-grained PAT, enable:
 | `SKIP_BUILD` | `false` | Same as `--skip-build` |
 | `UPDATE_CHANGELOG` | `true` | Update changelog (set `false` for `--skip-changelog`) |
 
+## FAQ
+
+### Does `--bump-version` work with the `all` command?
+
+Yes. Global flags apply throughout the workflow:
+```bash
+gh-bump --bump-version all           # patch bump
+gh-bump --bump-version --release-type=minor all
+```
+
+### Can I use `--org=` for a personal account?
+
+Yes. `--org=soderlind` works for both organizations and personal accounts — it uses `gh repo list OWNER` which handles both.
+
+### Is the `/` required in `--pattern=`?
+
+No. Pattern does prefix matching:
+- `--pattern=soderlind` → all repos owned by soderlind
+- `--pattern=soderlind/wp-` → only repos starting with `wp-`
+
+### Why is my repo being skipped?
+
+State tracking prevents duplicate processing. If a repo was already processed, it shows "Skipping (already pr_created)". To re-run:
+```bash
+rm -rf state logs
+gh-bump --repo=owner/repo all
+```
+
+### Will it work without Dependabot alerts?
+
+No. gh-bump is alert-driven — no alerts means nothing to fix. Version bumping only happens as part of the fix workflow.
+
+### Does `fix` auto-merge PRs?
+
+Yes, via GitHub's native auto-merge (`gh pr merge --auto`). However, this requires:
+1. Repository Settings → "Allow auto-merge" enabled
+2. Branch protection rules on the default branch
+
+If your repo doesn't have these, use `gh-bump all` which includes a manual merge step.
+
+### For WordPress plugins, what files get updated?
+
+When `--bump-version` is used:
+- **Plugin PHP file**: `Version:` header + version constant
+- **readme.txt**: `Stable tag:` + changelog section under `== Changelog ==`
+- **package.json**: `version` field (if present)
+
 ## Contributing
 
 1. Fork the repository

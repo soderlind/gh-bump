@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dry-run mode now shows build, version bump, and changelog steps
 
+### Added
+
+- FAQ section in README covering common questions
+
 ## [0.2.0] - 2026-04-17
 
 ### Added
