@@ -7,13 +7,17 @@
  *   gh-bump --repo=owner/repo [options]
  *   gh-bump --repo=owner/repo --dry-run
  *   gh-bump --repo=owner/repo --severity=critical --merge --release
+ *   gh-bump --full-run --dry-run
  */
 
 import { parseArgs } from "node:util";
 import { GitHubClient } from "./core/github.js";
 import { createLlmClient } from "./core/llm.js";
 import { runAgent } from "./core/agent.js";
-import type { AiProvider, Config, Severity, MergeMethod } from "./core/types.js";
+import { findFullRunIncompatibleOptions } from "./core/cli-mode.js";
+import { normalizeConfig } from "./core/config.js";
+import { runLocalRelease } from "./core/local-release.js";
+import type { Config } from "./core/types.js";
 import * as log from "./core/log.js";
 
 function showHelp(): void {
@@ -22,9 +26,12 @@ gh-bump — AI-powered Dependabot security fix agent
 
 USAGE
   gh-bump --repo=owner/repo [options]
+  gh-bump --full-run [--dry-run] [--publish]
 
 OPTIONS
   --repo=OWNER/REPO       Target repository (required)
+  --full-run              Run local npm update, patch version, checks, and optional publish
+  --publish               Publish to npm during --full-run (required for npm publish)
   --severity=LEVEL         Minimum severity: critical, high, medium, low
   --dry-run                Preview changes without applying them
   --merge                  Merge PR after creation
@@ -39,12 +46,25 @@ OPTIONS
   --help                   Show this help
 
 ENVIRONMENT
-  GITHUB_TOKEN             GitHub token (required)
+  GITHUB_TOKEN             GitHub token (required for Dependabot mode)
   AI_API_KEY               AI provider API key (or use --provider=github)
   OPENAI_API_KEY           OpenAI API key (fallback)
   ANTHROPIC_API_KEY        Anthropic API key (fallback)
 
+SAFETY
+  --full-run without --publish prepares and verifies the patch release only.
+  npm publish runs only when --full-run and --publish are both set.
+
 EXAMPLES
+  # Local npm release dry-run: show all planned phases and commands
+  gh-bump --full-run --dry-run
+
+  # Local npm release: update lockfile, bump patch, run checks, skip publish
+  gh-bump --full-run
+
+  # Local npm release and publish
+  gh-bump --full-run --publish
+
   # Dry-run: see what would be fixed
   gh-bump --repo=myorg/myapp --dry-run
 
@@ -62,10 +82,12 @@ EXAMPLES
 `);
 }
 
-function getConfig(): Config {
-  const { values } = parseArgs({
+function parseCliArgs() {
+  const parsed = parseArgs({
     options: {
       repo: { type: "string" },
+      "full-run": { type: "boolean", default: false },
+      publish: { type: "boolean", default: false },
       severity: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       merge: { type: "boolean", default: false },
@@ -80,7 +102,39 @@ function getConfig(): Config {
       help: { type: "boolean", default: false },
     },
     strict: true,
+    tokens: true,
   });
+
+  return {
+    values: parsed.values,
+    optionNames: parsed.tokens
+      .filter((token) => token.kind === "option")
+      .map((token) => token.name),
+  };
+}
+
+function getConfig(values: ReturnType<typeof parseCliArgs>["values"]): Config {
+  return normalizeConfig({
+    githubToken: process.env.GITHUB_TOKEN,
+    aiProvider: values.provider,
+    aiApiKey: process.env.AI_API_KEY,
+    openAiApiKey: process.env.OPENAI_API_KEY,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    aiModel: values.model,
+    repo: values.repo,
+    severity: values.severity,
+    dryRun: values["dry-run"],
+    merge: values.merge,
+    mergeMethod: values["merge-method"],
+    release: values.release,
+    tag: values.tag,
+    maxLlmCalls: values["max-llm-calls"],
+    maxAlerts: values["max-alerts"],
+  });
+}
+
+async function main(): Promise<void> {
+  const { values, optionNames } = parseCliArgs();
 
   if (values.help) {
     showHelp();
@@ -91,63 +145,35 @@ function getConfig(): Config {
     process.env.VERBOSE = "true";
   }
 
-  if (!values.repo) {
-    log.error("--repo is required. Run gh-bump --help for usage.");
-    process.exit(1);
+  if (values["full-run"]) {
+    const incompatibleOptions = findFullRunIncompatibleOptions(optionNames);
+    if (incompatibleOptions.length > 0) {
+      throw new Error(
+        `--full-run cannot be combined with: ${incompatibleOptions
+          .map((option) => `--${option}`)
+          .join(", ")}`
+      );
+    }
+
+    if (values["dry-run"]) {
+      console.log();
+      log.warn("DRY-RUN MODE — No shell commands will be run");
+      console.log();
+    }
+
+    await runLocalRelease({
+      dryRun: values["dry-run"],
+      publish: values.publish,
+      logger: log,
+    });
+    return;
   }
 
-  const githubToken = process.env.GITHUB_TOKEN;
-  if (!githubToken) {
-    log.error("GITHUB_TOKEN environment variable is required.");
-    process.exit(1);
+  if (values.publish) {
+    throw new Error("--publish is only supported with --full-run.");
   }
 
-  const provider = (values.provider ?? "github") as AiProvider;
-
-  // Resolve AI API key: AI_API_KEY > provider-specific env var > GITHUB_TOKEN for github provider
-  let aiApiKey =
-    process.env.AI_API_KEY ??
-    (provider === "openai"
-      ? process.env.OPENAI_API_KEY
-      : provider === "anthropic"
-        ? process.env.ANTHROPIC_API_KEY
-        : undefined);
-
-  // For github provider, fall back to GITHUB_TOKEN
-  if (!aiApiKey && provider === "github") {
-    aiApiKey = githubToken;
-  }
-
-  if (!aiApiKey) {
-    log.error(
-      provider === "github"
-        ? "GITHUB_TOKEN is required for the github provider."
-        : "AI_API_KEY environment variable is required (or OPENAI_API_KEY / ANTHROPIC_API_KEY)."
-    );
-    process.exit(1);
-  }
-
-  const merge = values.merge || values.release || values.tag || false;
-
-  return {
-    githubToken,
-    aiProvider: provider,
-    aiApiKey,
-    aiModel: values.model,
-    repo: values.repo,
-    severity: values.severity as Severity | undefined,
-    dryRun: values["dry-run"] ?? false,
-    merge,
-    mergeMethod: (values["merge-method"] ?? "squash") as MergeMethod,
-    release: values.release ?? false,
-    tag: values.tag ?? false,
-    maxLlmCalls: parseInt(values["max-llm-calls"] ?? "20", 10),
-    maxAlerts: parseInt(values["max-alerts"] ?? "10", 10),
-  };
-}
-
-async function main(): Promise<void> {
-  const config = getConfig();
+  const config = getConfig(values);
 
   if (config.dryRun) {
     console.log();

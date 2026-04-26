@@ -10,81 +10,18 @@ import type {
   AgentResult,
   Config,
   DependabotAlert,
-  FixPlan,
 } from "./types.js";
+import { parseFixPlan } from "./fix-plan.js";
+import { formatFixPlanSummary, summarizeFixPlan } from "./fix-plan-summary.js";
+import { validateFixPlan } from "./fix-plan-validation.js";
+import {
+  createBranchName,
+  hasLlmCallBudget,
+  validatePlanFileScope,
+} from "./agent-safety.js";
+import { groupAlertsByManifest, isLockfilePath } from "./manifest.js";
 import { SYSTEM_PROMPT, buildAlertPrompt } from "./prompts.js";
 import * as log from "./log.js";
-
-/**
- * Group alerts by manifest file so we make one PR per manifest.
- */
-function groupAlertsByManifest(
-  alerts: DependabotAlert[]
-): Map<string, DependabotAlert[]> {
-  const groups = new Map<string, DependabotAlert[]>();
-  for (const alert of alerts) {
-    const key = alert.dependency.manifest_path;
-    const group = groups.get(key) ?? [];
-    group.push(alert);
-    groups.set(key, group);
-  }
-  return groups;
-}
-
-/**
- * Map a lockfile path to its corresponding manifest file.
- */
-function resolveManifestFromLockfile(lockfile: string): string | null {
-  const dir = lockfile.replace(/[^/]*$/, ""); // keep trailing slash or empty
-  const name = lockfile.split("/").pop() ?? "";
-
-  const mapping: Record<string, string> = {
-    "package-lock.json": "package.json",
-    "yarn.lock": "package.json",
-    "pnpm-lock.yaml": "package.json",
-    "Gemfile.lock": "Gemfile",
-    "Cargo.lock": "Cargo.toml",
-    "composer.lock": "composer.json",
-    "poetry.lock": "pyproject.toml",
-    "Pipfile.lock": "Pipfile",
-  };
-
-  const manifest = mapping[name];
-  return manifest ? `${dir}${manifest}` : null;
-}
-
-/**
- * Parse the LLM response JSON into a FixPlan.
- */
-function parseFixPlan(text: string): FixPlan | null {
-  // Extract JSON from markdown code fences if present.
-  // Use greedy match + last closing fence to handle nested fences in JSON values.
-  const jsonMatch = text.match(/```(?:json)?\s*\n([\s\S]*)\n```\s*$/);
-  const jsonStr = jsonMatch ? jsonMatch[1] : text;
-
-  try {
-    const parsed = JSON.parse(jsonStr.trim());
-
-    if (!parsed.files || parsed.files.length === 0) {
-      if (parsed.reason) {
-        log.warn(`LLM skipped fix: ${parsed.reason}`);
-      }
-      return null;
-    }
-
-    return {
-      files: parsed.files,
-      prTitle: parsed.prTitle || "fix(deps): security dependency update",
-      prBody: parsed.prBody || "Automated security fix by gh-bump.",
-      commitMessage:
-        parsed.commitMessage || "fix(deps): security dependency update",
-    };
-  } catch {
-    log.error(`Failed to parse LLM response as JSON`);
-    log.debug(`Raw response: ${text}`);
-    return null;
-  }
-}
 
 /**
  * Create LLM tools that let the agent read repository files.
@@ -147,6 +84,7 @@ export async function runAgent(
   repo: string
 ): Promise<AgentResult[]> {
   const results: AgentResult[] = [];
+  let llmCalls = 0;
 
   // 1. Fetch alerts
   log.group(`Processing ${repo}`);
@@ -193,20 +131,8 @@ export async function runAgent(
 
     for (const filePath of manifestPaths) {
       // Skip lockfiles — agent shouldn't edit them
-      if (/lock|yarn\.lock|Gemfile\.lock|Cargo\.lock|composer\.lock|pnpm-lock/i.test(filePath)) {
+      if (isLockfilePath(filePath)) {
         log.debug(`  Skipping lockfile: ${filePath}`);
-
-        // Try to fetch the corresponding manifest instead
-        const manifestPath = resolveManifestFromLockfile(filePath);
-        if (manifestPath) {
-          try {
-            const content = await gh.getFileContent(repo, manifestPath, defaultBranch);
-            prefetchedFiles.set(manifestPath, content);
-            log.debug(`  Pre-fetched manifest: ${manifestPath}`);
-          } catch {
-            log.debug(`  Could not fetch manifest: ${manifestPath}`);
-          }
-        }
         continue;
       }
 
@@ -228,8 +154,21 @@ export async function runAgent(
       : undefined;
 
     // Call LLM
+    if (!hasLlmCallBudget(llmCalls, config.maxLlmCalls)) {
+      const msg = `Max LLM calls reached (${config.maxLlmCalls})`;
+      log.error(msg);
+      results.push({
+        repo,
+        alertsProcessed: groupAlerts.length,
+        prUrl: null,
+        error: msg,
+      });
+      continue;
+    }
+
     let response: string;
     try {
+      llmCalls += 1;
       response = await llm.call({
         system: SYSTEM_PROMPT,
         prompt,
@@ -248,15 +187,48 @@ export async function runAgent(
     }
 
     // Parse the fix plan
-    const plan = parseFixPlan(response);
+    const parsedPlan = parseFixPlan(response);
 
-    if (!plan) {
+    if (!parsedPlan.ok) {
+      if (parsedPlan.reason) {
+        log.warn(`LLM skipped fix: ${parsedPlan.reason}`);
+      } else {
+        log.error(`Invalid LLM fix plan: ${parsedPlan.error ?? "unknown error"}`);
+        log.debug(`Raw response: ${parsedPlan.raw}`);
+      }
       log.warn("  No fix produced for this group");
       results.push({
         repo,
         alertsProcessed: groupAlerts.length,
         prUrl: null,
         error: "No fix plan from LLM",
+      });
+      continue;
+    }
+
+    const plan = parsedPlan.plan;
+    const scopeError = validatePlanFileScope(plan.files, new Set(prefetchedFiles.keys()));
+    if (scopeError) {
+      log.error(`Unsafe fix plan: ${scopeError}`);
+      log.warn("  No fix produced for this group");
+      results.push({
+        repo,
+        alertsProcessed: groupAlerts.length,
+        prUrl: null,
+        error: scopeError,
+      });
+      continue;
+    }
+
+    const validationError = validateFixPlan(plan, groupAlerts, prefetchedFiles);
+    if (validationError) {
+      log.error(`Unsafe fix plan: ${validationError}`);
+      log.warn("  No fix produced for this group");
+      results.push({
+        repo,
+        alertsProcessed: groupAlerts.length,
+        prUrl: null,
+        error: validationError,
       });
       continue;
     }
@@ -270,6 +242,9 @@ export async function runAgent(
       for (const f of plan.files) {
         log.dryRun(`  Would update: ${f.path}`);
       }
+      for (const line of formatFixPlanSummary(summarizeFixPlan(plan, prefetchedFiles))) {
+        log.dryRun(`  ${line}`);
+      }
       log.dryRun(`  PR title: ${plan.prTitle}`);
       results.push({
         repo,
@@ -281,9 +256,7 @@ export async function runAgent(
     }
 
     // 4. Create branch, commit, and PR
-    // Sanitize manifest path for use as branch name: replace slashes, strip .lock suffix (git disallows refs ending in .lock)
-    const safeName = manifest.replace(/[/\\]/g, "-").replace(/\.lock$/, "");
-    const branchName = `gh-bump/${new Date().toISOString().slice(0, 10)}/${safeName}`;
+    const branchName = createBranchName(manifest);
 
     try {
       await gh.createBranch(repo, branchName, baseSha);

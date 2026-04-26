@@ -6,55 +6,41 @@ import * as core from "@actions/core";
 import { GitHubClient } from "./core/github.js";
 import { createLlmClient } from "./core/llm.js";
 import { runAgent } from "./core/agent.js";
-import type { AiProvider, Config, Severity, MergeMethod } from "./core/types.js";
+import { normalizeConfig } from "./core/config.js";
 
 async function run(): Promise<void> {
   try {
     const githubToken = core.getInput("github-token", { required: true });
-    const aiProvider = (core.getInput("ai-provider") || "github") as AiProvider;
-    let aiApiKey = core.getInput("ai-api-key") || undefined;
-
-    // For github provider, fall back to github-token
-    if (!aiApiKey && aiProvider === "github") {
-      aiApiKey = githubToken;
-    }
-    if (!aiApiKey) {
-      throw new Error("ai-api-key is required (or use provider=github to use github-token)");
-    }
-
+    const aiProvider = core.getInput("ai-provider") || "github";
     const aiModel = core.getInput("ai-model") || undefined;
     const repo = core.getInput("repo", { required: true });
-    const severity = (core.getInput("severity") || undefined) as Severity | undefined;
-    const dryRun = core.getBooleanInput("dry-run");
-    const merge = core.getBooleanInput("merge");
-    const mergeMethod = (core.getInput("merge-method") || "squash") as MergeMethod;
-    const release = core.getBooleanInput("release");
-    const tag = core.getBooleanInput("tag");
-    const maxAlerts = parseInt(core.getInput("max-alerts") || "10", 10);
-    const maxLlmCalls = parseInt(core.getInput("max-llm-calls") || "20", 10);
 
     if (core.getInput("verbose") === "true") {
       process.env.VERBOSE = "true";
     }
 
-    const config: Config = {
+    const config = normalizeConfig({
       githubToken,
       aiProvider,
-      aiApiKey,
+      aiApiKey: core.getInput("ai-api-key") || undefined,
       aiModel,
       repo,
-      severity,
-      dryRun,
-      merge: merge || release || tag,
-      mergeMethod,
-      release,
-      tag,
-      maxLlmCalls,
-      maxAlerts,
-    };
+      severity: core.getInput("severity") || undefined,
+      dryRun: core.getBooleanInput("dry-run"),
+      merge: core.getBooleanInput("merge"),
+      mergeMethod: core.getInput("merge-method") || "squash",
+      release: core.getBooleanInput("release"),
+      tag: core.getBooleanInput("tag"),
+      maxLlmCalls: core.getInput("max-llm-calls") || "20",
+      maxAlerts: core.getInput("max-alerts") || "10",
+    });
 
     const gh = new GitHubClient(githubToken);
-    const llm = await createLlmClient(aiProvider, aiApiKey, aiModel);
+    const llm = await createLlmClient(
+      config.aiProvider,
+      config.aiApiKey,
+      config.aiModel
+    );
 
     const results = await runAgent(gh, llm, config, repo);
 

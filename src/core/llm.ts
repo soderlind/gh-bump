@@ -3,6 +3,7 @@
  */
 
 import { generateText, type LanguageModel, type ToolSet } from "ai";
+import { writeFile } from "node:fs/promises";
 import type { AiProvider } from "./types.js";
 import * as log from "./log.js";
 
@@ -74,6 +75,11 @@ export async function createLlmClient(
       log.debug(
         `LLM response: ${result.text.slice(0, 100)}... (${result.usage?.totalTokens ?? "?"} tokens)`
       );
+
+      if (process.env.GH_BUMP_LLM_RESPONSE_FILE) {
+        await writeFile(process.env.GH_BUMP_LLM_RESPONSE_FILE, result.text, "utf8");
+        log.debug(`Wrote full LLM response to ${process.env.GH_BUMP_LLM_RESPONSE_FILE}`);
+      }
 
       return result.text;
     },

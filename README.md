@@ -15,6 +15,8 @@ AI-powered Dependabot security fix agent. Uses an LLM to analyze your code and f
 
 Because the fix logic is driven by an LLM rather than hardcoded patterns, gh-bump works with **any ecosystem** — npm, pip, Go, Rust, Ruby, PHP, Maven, NuGet, and anything else the LLM understands.
 
+`--full-run` is a separate local npm release workflow. It checks the local package, updates the lockfile, bumps the patch version, runs available verification scripts, and publishes only when `--publish` is also set.
+
 ### Architecture
 
 ```
@@ -134,8 +136,9 @@ The `github` provider hits the GitHub Models endpoint (`models.inference.ai.azur
 
 - **No repo clone.** Everything happens through the GitHub API — file reads, commits, PRs. Fast, no git binary needed.
 - **Manifest-only fixes.** Updates version constraints in manifest files but NOT lockfiles. Lockfile regeneration is left to CI or Dependabot.
+- **npm transitive safety.** For package.json fixes, gh-bump rejects plans that add new direct dependencies and prefers existing direct dependency updates or package-manager overrides for transitive alerts.
 - **One PR per manifest.** Alerts on the same manifest are batched into a single PR to avoid merge conflicts.
-- **Dry-run first.** `--dry-run` shows what the agent would do without creating branches, commits, or PRs.
+- **Dry-run first.** `--dry-run` shows what the agent would do without creating branches, commits, or PRs, including dependency version changes and override changes when package.json is involved.
 - **Cost guardrails.** `--max-alerts` (default 10) and `--max-llm-calls` (default 20) cap how much work and spend a single run can do.
 
 ### Build System
@@ -153,6 +156,23 @@ Both bundles include a `createRequire` banner for CJS module compatibility (some
 npm run build         # bundle with esbuild
 npm run build:check   # type-check only (tsc --noEmit)
 ```
+
+### Local Full Run
+
+Use `--full-run` from an npm package root when you want a local release preparation workflow instead of Dependabot alert fixing.
+
+```bash
+# Preview the local release workflow without running shell commands
+gh-bump --full-run --dry-run
+
+# Update package-lock.json, bump patch version, and run available checks
+gh-bump --full-run
+
+# Run the same workflow and publish to npm
+gh-bump --full-run --publish
+```
+
+Without `--publish`, `--full-run` explicitly skips `npm publish`. Execute mode requires a clean git worktree before mutating files. npm authentication is checked only when `--publish` is set.
 
 ## Requirements
 
@@ -175,6 +195,8 @@ npx gh-bump --repo=owner/repo --dry-run
 | Option | Description |
 |--------|-------------|
 | `--repo=OWNER/REPO` | Target repository (required) |
+| `--full-run` | Run local npm update, patch version, checks, and optional publish |
+| `--publish` | Publish to npm during `--full-run` |
 | `--severity=LEVEL` | Minimum severity: `critical`, `high`, `medium`, `low` |
 | `--dry-run` | Preview changes without applying them |
 | `--merge` | Merge PR after creation |
@@ -195,12 +217,26 @@ npx gh-bump --repo=owner/repo --dry-run
 | `AI_API_KEY` | AI provider API key (not needed for `github` provider) |
 | `OPENAI_API_KEY` | OpenAI API key (fallback if `AI_API_KEY` not set) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (fallback if `AI_API_KEY` not set) |
+| `GH_BUMP_LLM_RESPONSE_FILE` | Optional debug path for writing the raw LLM response |
 
 ### Examples
 
 ```bash
+# Local release dry-run: see every planned phase and command
+gh-bump --full-run --dry-run
+
+# Local release without publishing
+gh-bump --full-run
+
+# Local release and npm publish
+gh-bump --full-run --publish
+
 # Dry-run: see what would be fixed
 gh-bump --repo=myorg/myapp --dry-run
+
+# Dry-run a larger batch and inspect the raw LLM response if needed
+GH_BUMP_LLM_RESPONSE_FILE=/tmp/gh-bump-response.json \
+  gh-bump --repo=myorg/myapp --dry-run --max-alerts=50
 
 # Fix critical alerts and merge
 gh-bump --repo=myorg/myapp --severity=critical --merge
@@ -271,6 +307,21 @@ jobs:
 | `pr-urls` | JSON array of PR URLs |
 | `summary` | Human-readable summary |
 
+## Dry-run Output
+
+`--dry-run` performs the same alert fetching, manifest prefetching, LLM call, FixPlan parsing, and deterministic validation as a real run. It stops before creating branches, commits, or pull requests.
+
+For package.json changes, the dry-run output includes a compact plan summary:
+
+```text
+[DRY-RUN]   Would update: package.json
+[DRY-RUN]   package.json: devDependencies changed: electron ^40.0.0 -> ^40.8.5, vite ^7.3.1 -> ^7.3.2
+[DRY-RUN]   package.json: overrides added: axios 1.15.0, follow-redirects 1.16.0, lodash 4.18.0
+[DRY-RUN]   PR title: fix(deps): update vulnerable npm dependencies
+```
+
+If an LLM proposes unsafe package.json changes, such as adding new direct npm dependencies for transitive alerts or editing lockfiles, gh-bump rejects the plan before dry-run success, commit, or PR creation.
+
 ## GitHub Token Permissions
 
 For fine-grained PAT, enable:
@@ -286,8 +337,15 @@ src/
 ├── cli.ts              CLI entrypoint (parseArgs, env resolution)
 ├── action.ts           GitHub Action entrypoint (@actions/core)
 └── core/
+    ├── agent-safety.ts Agent safety helpers (branch names, edit scope, call budget)
     ├── agent.ts        Agent loop (fetch → group → LLM → commit → PR)
+    ├── config.ts       Shared CLI and Action config normalization
+    ├── fix-plan-summary.ts Dry-run FixPlan summary generation
+    ├── fix-plan.ts     LLM FixPlan schema parsing
+    ├── fix-plan-validation.ts Deterministic FixPlan safety validation
     ├── github.ts       GitHubClient (Octokit wrapper)
+    ├── local-release.ts Local npm full-run workflow
+    ├── manifest.ts     Lockfile-to-manifest mapping and alert grouping
     ├── llm.ts          Provider-agnostic LLM client (Vercel AI SDK)
     ├── prompts.ts      System prompt + alert prompt builder
     ├── types.ts        Shared TypeScript interfaces
@@ -303,6 +361,14 @@ Any ecosystem the LLM understands. It reads your actual manifest files and deter
 ### Does it update lockfiles?
 
 No. The agent updates version constraints in manifest files (package.json, pyproject.toml, etc.). Lockfile regeneration should be handled by your CI pipeline or Dependabot.
+
+### How does it handle npm transitive vulnerabilities?
+
+For npm alerts where the vulnerable package is not already a direct dependency, gh-bump asks the LLM to use a parent dependency update or package-manager override instead of adding the transitive package as a new direct dependency. It also validates the returned FixPlan and rejects package.json plans that add new direct entries to `dependencies`, `devDependencies`, `optionalDependencies`, or `peerDependencies`.
+
+### How can I debug malformed LLM responses?
+
+Set `GH_BUMP_LLM_RESPONSE_FILE` to write the full raw model response to disk. This is useful when a provider returns malformed JSON or when you want to inspect the exact FixPlan before opening an issue.
 
 ### How much does the AI cost per run?
 

@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-04-26
+
+### Added
+
+- Local npm `--full-run` workflow for lockfile update, patch version bump, verification scripts, and explicit `--publish`-gated npm publishing
+- Optional `GH_BUMP_LLM_RESPONSE_FILE` debug artifact for inspecting full raw LLM fix plans
+
+### Changed
+
+- Strengthen npm transitive dependency guidance so generated fixes prefer parent updates or package-manager overrides instead of adding transitive packages as new direct dependencies
+- Improve Dependabot dry-run output with dependency version changes, override changes, and new direct dependency attempts
+
+## [1.0.1] - 2026-04-25
+
+### Changed
+
+- Centralize CLI and GitHub Action config normalization, validation, and provider API key fallback
+- Move LLM FixPlan parsing into an explicit contract module with schema validation
+
 ### Fixed
 
+- CLI bundle: avoid duplicate shebang that prevented `dist/cli.js` from starting
 - GitHub Models: use Chat Completions API instead of Responses API (`client.chat()`)
 - GitHub Models: pre-fetch manifest files and skip tool use (free tier lacks function calling)
 - Dependabot alerts: use cursor-based pagination instead of `page` parameter
@@ -17,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Unit tests for config normalization and FixPlan parsing
 - Lockfile-to-manifest mapping (e.g. `package-lock.json` → `package.json`)
 - `prepublishOnly` script for npm publishing
 - `files` field, keywords, author, MIT license
