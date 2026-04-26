@@ -234,6 +234,10 @@ gh-bump --full-run --publish
 # Dry-run: see what would be fixed
 gh-bump --repo=myorg/myapp --dry-run
 
+# Use gh cli to set the token
+GITHUB_TOKEN="$(gh auth token)" \
+  gh-bump --repo=myorg/myapp --dry-run
+
 # Dry-run a larger batch and inspect the raw LLM response if needed
 GH_BUMP_LLM_RESPONSE_FILE=/tmp/gh-bump-response.json \
   gh-bump --repo=myorg/myapp --dry-run --max-alerts=50
