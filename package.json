@@ -1,6 +1,6 @@
 {
 	"name": "gh-bump",
-	"version": "1.0.0",
+	"version": "1.0.2",
 	"description": "AI-powered Dependabot security fix agent. Analyzes code with LLM, applies fixes via GitHub API, creates PRs. Works as CLI and GitHub Action.",
 	"main": "dist/cli.js",
 	"bin": {

@@ -15,7 +15,6 @@ await esbuild.build({
   ...common,
   entryPoints: ["src/cli.ts"],
   outfile: "dist/cli.js",
-  banner: { js: "#!/usr/bin/env node\n" + common.banner.js },
 });
 
 // Action entrypoint
