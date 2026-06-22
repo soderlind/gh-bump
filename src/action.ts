@@ -7,6 +7,10 @@ import { GitHubClient } from "./core/github.js";
 import { createLlmClient } from "./core/llm.js";
 import { runAgent } from "./core/agent.js";
 import { normalizeConfig } from "./core/config.js";
+import {
+  collectOutcomeMessages,
+  summarizeAgentResults,
+} from "./core/result-summary.js";
 
 async function run(): Promise<void> {
   try {
@@ -45,23 +49,44 @@ async function run(): Promise<void> {
     const results = await runAgent(gh, llm, config, repo);
 
     // Set outputs
-    const prsCreated = results.filter((r) => r.prUrl).length;
-    const alertsFixed = results.reduce((sum, r) => sum + r.alertsProcessed, 0);
+    const {
+      prsCreated,
+      totalAlerts: alertsFixed,
+      noFix,
+      budgetStops,
+      failed,
+    } = summarizeAgentResults(results);
     const prUrls = results.filter((r) => r.prUrl).map((r) => r.prUrl!);
 
     core.setOutput("prs-created", prsCreated);
     core.setOutput("alerts-fixed", alertsFixed);
     core.setOutput("pr-urls", JSON.stringify(prUrls));
+
+    core.setOutput("no-fix", noFix);
+    core.setOutput("budget-stops", budgetStops);
+    core.setOutput("failed", failed);
     core.setOutput(
       "summary",
-      `Processed ${alertsFixed} alerts, created ${prsCreated} PRs`
+      `Processed ${alertsFixed} alerts, created ${prsCreated} PRs, no-fix ${noFix}, budget-stops ${budgetStops}, failed ${failed}`
     );
 
-    // Fail if any errors
-    const errors = results.filter((r) => r.error);
-    if (errors.length > 0) {
+    const noFixMessages = collectOutcomeMessages(results, "no-fix");
+    if (noFixMessages.length > 0) {
       core.warning(
-        `${errors.length} alert group(s) had errors: ${errors.map((e) => e.error).join("; ")}`
+        `${noFixMessages.length} alert group(s) produced no fix: ${noFixMessages.join("; ")}`
+      );
+    }
+
+    const failures = collectOutcomeMessages(results, "failed");
+    if (failures.length > 0) {
+      core.warning(
+        `${failures.length} alert group(s) failed: ${failures.join("; ")}`
+      );
+    }
+
+    if (budgetStops > 0) {
+      core.warning(
+        `${budgetStops} alert group(s) stopped due to configured budget limits.`
       );
     }
   } catch (err) {

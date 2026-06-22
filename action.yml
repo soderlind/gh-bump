@@ -66,6 +66,12 @@ outputs:
     description: "Number of PRs created"
   alerts-fixed:
     description: "Number of alerts processed"
+  no-fix:
+    description: "Number of alert groups that produced no fix plan"
+  budget-stops:
+    description: "Number of alert groups stopped by configured budget limits"
+  failed:
+    description: "Number of alert groups that failed during processing"
   pr-urls:
     description: "JSON array of PR URLs"
   summary:
