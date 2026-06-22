@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-22
+
+### Changed
+
+- Refreshed `package-lock.json` on `main` using npm lockfile-only remediation to resolve outstanding Dependabot alerts
+- Confirmed lockfile-resolved advisories converge after a short Dependabot indexing delay
+
+### Documentation
+
+- Clarified release notes around outcome semantics and lockfile-driven alert closure workflow
+
 ## [1.0.3] - 2026-06-22
 
 ### Added
