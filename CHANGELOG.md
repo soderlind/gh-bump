@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-22
+
+### Added
+
+- Acceptance test suite for built CLI flows (`--help`, `--full-run --dry-run`, and incompatible flag handling)
+- `test:acceptance` npm script to build and run end-to-end acceptance checks
+- GitHub Action outputs for outcome taxonomy: `no-fix`, `budget-stops`, and `failed`
+
+### Changed
+
+- Agent result model now uses explicit outcome classification (`success`, `no-fix`, `budget-stop`, `failed`) with optional diagnostic messages
+- CLI and Action summaries now report outcome-class counts instead of treating all non-PR paths as generic errors
+- Documentation updates for new Action outputs and downstream workflow handling examples
+
+### Documentation
+
+- Added domain model artifacts and ADR for bounded contexts, lifecycle boundaries, and shared-platform outcome semantics
+
 ## [1.0.2] - 2026-04-26
 
 ### Added
