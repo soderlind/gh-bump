@@ -59,11 +59,14 @@ export interface FixPlan {
   commitMessage: string;
 }
 
+export type AgentOutcome = "success" | "no-fix" | "failed" | "budget-stop";
+
 export interface AgentResult {
   repo: string;
   alertsProcessed: number;
   prUrl: string | null;
-  error: string | null;
+  outcome: AgentOutcome;
+  message: string | null;
 }
 
 // ── Config ─────────────────────────────────────────────────────────

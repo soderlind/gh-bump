@@ -23,6 +23,22 @@ import { groupAlertsByManifest, isLockfilePath } from "./manifest.js";
 import { SYSTEM_PROMPT, buildAlertPrompt } from "./prompts.js";
 import * as log from "./log.js";
 
+function createResult(
+  repo: string,
+  alertsProcessed: number,
+  outcome: AgentResult["outcome"],
+  prUrl: string | null,
+  message: string | null = null
+): AgentResult {
+  return {
+    repo,
+    alertsProcessed,
+    prUrl,
+    outcome,
+    message,
+  };
+}
+
 /**
  * Create LLM tools that let the agent read repository files.
  */
@@ -94,7 +110,7 @@ export async function runAgent(
     log.info("No open Dependabot alerts");
     log.groupEnd();
     return [
-      { repo, alertsProcessed: 0, prUrl: null, error: null },
+      createResult(repo, 0, "success", null),
     ];
   }
 
@@ -157,12 +173,7 @@ export async function runAgent(
     if (!hasLlmCallBudget(llmCalls, config.maxLlmCalls)) {
       const msg = `Max LLM calls reached (${config.maxLlmCalls})`;
       log.error(msg);
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: msg,
-      });
+      results.push(createResult(repo, groupAlerts.length, "budget-stop", null, msg));
       continue;
     }
 
@@ -177,12 +188,7 @@ export async function runAgent(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`LLM call failed: ${msg}`);
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: msg,
-      });
+      results.push(createResult(repo, groupAlerts.length, "failed", null, msg));
       continue;
     }
 
@@ -197,12 +203,8 @@ export async function runAgent(
         log.debug(`Raw response: ${parsedPlan.raw}`);
       }
       log.warn("  No fix produced for this group");
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: "No fix plan from LLM",
-      });
+      const noFixMessage = parsedPlan.reason ?? "No fix plan from LLM";
+      results.push(createResult(repo, groupAlerts.length, "no-fix", null, noFixMessage));
       continue;
     }
 
@@ -211,12 +213,7 @@ export async function runAgent(
     if (scopeError) {
       log.error(`Unsafe fix plan: ${scopeError}`);
       log.warn("  No fix produced for this group");
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: scopeError,
-      });
+      results.push(createResult(repo, groupAlerts.length, "no-fix", null, scopeError));
       continue;
     }
 
@@ -224,12 +221,7 @@ export async function runAgent(
     if (validationError) {
       log.error(`Unsafe fix plan: ${validationError}`);
       log.warn("  No fix produced for this group");
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: validationError,
-      });
+      results.push(createResult(repo, groupAlerts.length, "no-fix", null, validationError));
       continue;
     }
 
@@ -246,12 +238,7 @@ export async function runAgent(
         log.dryRun(`  ${line}`);
       }
       log.dryRun(`  PR title: ${plan.prTitle}`);
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: null,
-      });
+      results.push(createResult(repo, groupAlerts.length, "success", null));
       continue;
     }
 
@@ -320,21 +307,11 @@ export async function runAgent(
         }
       }
 
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: pr.url,
-        error: null,
-      });
+      results.push(createResult(repo, groupAlerts.length, "success", pr.url));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`  Failed to create PR: ${msg}`);
-      results.push({
-        repo,
-        alertsProcessed: groupAlerts.length,
-        prUrl: null,
-        error: msg,
-      });
+      results.push(createResult(repo, groupAlerts.length, "failed", null, msg));
     }
   }
 

@@ -308,8 +308,42 @@ jobs:
 |--------|-------------|
 | `prs-created` | Number of PRs created |
 | `alerts-fixed` | Number of alerts processed |
+| `no-fix` | Number of alert groups that produced no fix plan |
+| `budget-stops` | Number of alert groups stopped by configured budget limits |
+| `failed` | Number of alert groups that failed during processing |
 | `pr-urls` | JSON array of PR URLs |
-| `summary` | Human-readable summary |
+| `summary` | Human-readable summary including success/no-fix/budget-stop/failed counts |
+
+`failed` represents processing failures (for example, runtime or API errors). `no-fix` and `budget-stops` are non-failure outcomes and are reported separately.
+
+Example: use outputs in downstream workflow logic.
+
+```yaml
+jobs:
+  fix-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run gh-bump
+        id: bump
+        uses: soderlind/gh-bump@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          ai-provider: github
+
+      - name: Fail workflow on processing failures
+        if: ${{ steps.bump.outputs.failed != '0' }}
+        run: |
+          echo "gh-bump reported processing failures"
+          exit 1
+
+      - name: Notice no-fix outcomes
+        if: ${{ steps.bump.outputs.no-fix != '0' }}
+        run: echo "Some alert groups produced no fix plan"
+
+      - name: Notice budget stops
+        if: ${{ steps.bump.outputs.budget-stops != '0' }}
+        run: echo "Some alert groups were stopped by budget limits"
+```
 
 ## Dry-run Output
 

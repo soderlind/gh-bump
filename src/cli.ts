@@ -17,6 +17,7 @@ import { runAgent } from "./core/agent.js";
 import { findFullRunIncompatibleOptions } from "./core/cli-mode.js";
 import { normalizeConfig } from "./core/config.js";
 import { runLocalRelease } from "./core/local-release.js";
+import { summarizeAgentResults } from "./core/result-summary.js";
 import type { Config } from "./core/types.js";
 import * as log from "./core/log.js";
 
@@ -193,19 +194,36 @@ async function main(): Promise<void> {
   // Summary
   console.log();
   log.group("Summary");
-  const prsCreated = results.filter((r) => r.prUrl).length;
-  const failed = results.filter((r) => r.error).length;
-  const totalAlerts = results.reduce((sum, r) => sum + r.alertsProcessed, 0);
+  const { prsCreated, failed, noFix, budgetStops, totalAlerts } =
+    summarizeAgentResults(results);
 
   log.info(`Alerts processed: ${totalAlerts}`);
   log.info(`PRs created:      ${prsCreated}`);
+  if (noFix > 0) log.warn(`No fix produced: ${noFix}`);
+  if (budgetStops > 0) log.warn(`Budget stops:    ${budgetStops}`);
   if (failed > 0) log.warn(`Failed:           ${failed}`);
 
   for (const r of results) {
     if (r.prUrl) {
       log.success(`  ${r.repo}: ${r.prUrl}`);
-    } else if (r.error) {
-      log.error(`  ${r.repo}: ${r.error}`);
+      continue;
+    }
+
+    switch (r.outcome) {
+      case "failed":
+        log.error(`  ${r.repo}: ${r.message ?? "Unknown failure"}`);
+        break;
+      case "no-fix":
+        log.warn(`  ${r.repo}: ${r.message ?? "No fix produced"}`);
+        break;
+      case "budget-stop":
+        log.warn(`  ${r.repo}: ${r.message ?? "Budget limit reached"}`);
+        break;
+      default:
+        if (config.dryRun) {
+          log.info(`  ${r.repo}: dry-run completed`);
+        }
+        break;
     }
   }
   log.groupEnd();

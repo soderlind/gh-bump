@@ -1,0 +1,3 @@
+# Bounded context split and lifecycle boundaries
+
+gh-bump is modeled as separate bounded contexts for Security Remediation and Local Release Automation, with a Shared Platform Layer for cross-cutting execution concerns. We made this split because the two flows have different goals, invariants, and failure semantics, and coupling them would blur domain language and increase risk of policy leakage. Security Remediation terminates at creation of a remediation pull request while merge, tag, and release are downstream lifecycle concerns; Local Release Automation remains local-only with no AI or GitHub API calls, and dry-run is a shared execution mode that produces no domain outcome artifact.
