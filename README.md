@@ -178,7 +178,7 @@ Without `--publish`, `--full-run` explicitly skips `npm publish`. Execute mode r
 
 - Node.js 20+
 - A GitHub token with `repo` + `security_events` scope
-- An AI API key (OpenAI or Anthropic)
+- An AI API key for `openai` or `anthropic` providers (not needed for `github` provider)
 
 ## CLI Usage
 
@@ -301,6 +301,7 @@ jobs:
 | `tag` | no | `false` | Create tag (implies merge) |
 | `max-alerts` | no | `10` | Max alerts per run |
 | `max-llm-calls` | no | `20` | Cost guardrail |
+| `verbose` | no | `false` | Enable debug output |
 
 ### Action outputs
 
@@ -398,7 +399,9 @@ Any ecosystem the LLM understands. It reads your actual manifest files and deter
 
 ### Does it update lockfiles?
 
-No. The agent updates version constraints in manifest files (package.json, pyproject.toml, etc.). Lockfile regeneration should be handled by your CI pipeline or Dependabot.
+For Dependabot remediation mode, no. The agent updates version constraints in manifest files (package.json, pyproject.toml, etc.) and does not directly edit lockfiles.
+
+For local `--full-run` mode, yes. It updates `package-lock.json` locally as part of the npm release preparation workflow.
 
 ### How does it handle npm transitive vulnerabilities?
 
