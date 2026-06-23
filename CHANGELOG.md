@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-06-23
+
+### Documentation
+
+- Corrected README requirements wording to clarify that AI API keys are optional when using the `github` provider
+- Added missing `verbose` input to GitHub Action inputs table in README
+- Clarified lockfile behavior by mode in README (`--full-run` updates local lockfile, Dependabot remediation mode does not)
+
 ## [1.0.4] - 2026-06-22
 
 ### Changed
