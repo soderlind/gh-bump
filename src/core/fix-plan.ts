@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import type { FixPlan } from "./types.js";
+import type { FixPlan } from "./types.ts";
 
 const fileChangeSchema = z.object({
   path: z.string().min(1),

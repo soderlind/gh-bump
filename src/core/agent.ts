@@ -1,48 +1,59 @@
 /**
- * AI agent loop: orchestrates LLM + GitHub API to fix Dependabot alerts.
+ * Security Remediation: turns Dependabot alerts into remediation pull requests.
+ *
+ * The context ends at the Terminal Remediation Artifact — merge, tag and
+ * release are downstream lifecycle concerns (see docs/adr/0001).
  */
 
 import { tool, zodSchema } from "ai";
 import { z } from "zod";
-import type { GitHubClient } from "./github.js";
-import type { LlmClient } from "./llm.js";
+import type { RepositoryPort } from "./repository.ts";
+import type { LlmClient } from "./llm.ts";
 import type {
   AgentResult,
   Config,
   DependabotAlert,
-} from "./types.js";
-import { parseFixPlan } from "./fix-plan.js";
-import { formatFixPlanSummary, summarizeFixPlan } from "./fix-plan-summary.js";
-import { validateFixPlan } from "./fix-plan-validation.js";
+  RemediationArtifact,
+} from "./types.ts";
+import { formatFixPlanSummary, summarizeFixPlan } from "./fix-plan-summary.ts";
+import { reviewFixPlan } from "./fix-plan-review.ts";
 import {
-  createBranchName,
-  hasLlmCallBudget,
-  validatePlanFileScope,
-} from "./agent-safety.js";
-import { groupAlertsByManifest, isLockfilePath } from "./manifest.js";
-import { SYSTEM_PROMPT, buildAlertPrompt } from "./prompts.js";
-import * as log from "./log.js";
+  groupAlertsByManifest,
+  isLockfilePath,
+  isVerifiableManifestPath,
+} from "./manifest.ts";
+import { SYSTEM_PROMPT, buildAlertPrompt } from "./prompts.ts";
+import * as log from "./log.ts";
 
 function createResult(
   repo: string,
   alertsProcessed: number,
   outcome: AgentResult["outcome"],
-  prUrl: string | null,
+  artifact: RemediationArtifact | null,
   message: string | null = null
 ): AgentResult {
   return {
     repo,
     alertsProcessed,
-    prUrl,
+    prUrl: artifact?.prUrl ?? null,
     outcome,
     message,
+    artifact,
   };
+}
+
+function createBranchName(manifest: string, now = Date.now()): string {
+  const safeName = manifest.replace(/[/\\]/g, "-").replace(/\.lock$/, "");
+  const date = new Date(now).toISOString().slice(0, 10);
+  const suffix = now.toString(36);
+
+  return `gh-bump/${date}/${safeName}-${suffix}`;
 }
 
 /**
  * Create LLM tools that let the agent read repository files.
  */
-function createAgentTools(gh: GitHubClient, repo: string, ref: string) {
+function createAgentTools(gh: RepositoryPort, repo: string, ref: string) {
   return {
     read_file: tool({
       description:
@@ -90,11 +101,36 @@ function createAgentTools(gh: GitHubClient, repo: string, ref: string) {
   };
 }
 
+async function fetchEditableManifests(
+  gh: RepositoryPort,
+  repo: string,
+  ref: string,
+  alerts: DependabotAlert[]
+): Promise<Map<string, string>> {
+  const fetched = new Map<string, string>();
+
+  for (const path of new Set(alerts.map((a) => a.dependency.manifest_path))) {
+    if (isLockfilePath(path)) {
+      log.debug(`  Skipping lockfile: ${path}`);
+      continue;
+    }
+
+    try {
+      fetched.set(path, await gh.getFileContent(repo, path, ref));
+      log.debug(`  Pre-fetched: ${path}`);
+    } catch {
+      log.warn(`  Could not fetch: ${path}`);
+    }
+  }
+
+  return fetched;
+}
+
 /**
  * Run the agent for a single repository.
  */
 export async function runAgent(
-  gh: GitHubClient,
+  gh: RepositoryPort,
   llm: LlmClient,
   config: Config,
   repo: string
@@ -139,52 +175,39 @@ export async function runAgent(
       `\n  Manifest: ${manifest} (${groupAlerts.length} alert(s))`
     );
 
-    // Pre-fetch manifest files so the LLM has context even without tools
-    const manifestPaths = new Set(
-      groupAlerts.map((a) => a.dependency.manifest_path)
-    );
-    const prefetchedFiles = new Map<string, string>();
-
-    for (const filePath of manifestPaths) {
-      // Skip lockfiles — agent shouldn't edit them
-      if (isLockfilePath(filePath)) {
-        log.debug(`  Skipping lockfile: ${filePath}`);
-        continue;
-      }
-
-      try {
-        const content = await gh.getFileContent(repo, filePath, defaultBranch);
-        prefetchedFiles.set(filePath, content);
-        log.debug(`  Pre-fetched: ${filePath}`);
-      } catch {
-        log.warn(`  Could not fetch: ${filePath}`);
-      }
+    if (config.merge && !isVerifiableManifestPath(manifest)) {
+      const msg = `Unattended merging requires content verification, but ${manifest} is not a verifiable manifest. Disable merging to create a pull request for human review.`;
+      log.warn(`  No fix produced for this group: ${msg}`);
+      results.push(
+        createResult(repo, groupAlerts.length, "no-fix", null, msg)
+      );
+      continue;
     }
 
-    // Build prompt with pre-fetched file contents
-    const prompt = buildAlertPrompt(repo, groupAlerts, prefetchedFiles);
-
-    // Create tools only for providers that support function calling
+    const fetchedManifests = await fetchEditableManifests(
+      gh,
+      repo,
+      defaultBranch,
+      groupAlerts
+    );
+    const prompt = buildAlertPrompt(repo, groupAlerts, fetchedManifests);
     const tools = useTools
       ? createAgentTools(gh, repo, defaultBranch)
       : undefined;
 
-    // Call LLM
-    if (!hasLlmCallBudget(llmCalls, config.maxLlmCalls)) {
+    if (llmCalls >= config.maxLlmCalls) {
       const msg = `Max LLM calls reached (${config.maxLlmCalls})`;
       log.error(msg);
-      results.push(createResult(repo, groupAlerts.length, "budget-stop", null, msg));
+      results.push(
+        createResult(repo, groupAlerts.length, "budget-stop", null, msg)
+      );
       continue;
     }
 
     let response: string;
     try {
       llmCalls += 1;
-      response = await llm.call({
-        system: SYSTEM_PROMPT,
-        prompt,
-        tools,
-      });
+      response = await llm.call({ system: SYSTEM_PROMPT, prompt, tools });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`LLM call failed: ${msg}`);
@@ -192,49 +215,29 @@ export async function runAgent(
       continue;
     }
 
-    // Parse the fix plan
-    const parsedPlan = parseFixPlan(response);
+    const review = reviewFixPlan(response, groupAlerts, fetchedManifests);
 
-    if (!parsedPlan.ok) {
-      if (parsedPlan.reason) {
-        log.warn(`LLM skipped fix: ${parsedPlan.reason}`);
-      } else {
-        log.error(`Invalid LLM fix plan: ${parsedPlan.error ?? "unknown error"}`);
-        log.debug(`Raw response: ${parsedPlan.raw}`);
+    if (!review.admitted) {
+      log.warn(`  No fix produced for this group: ${review.reason}`);
+      if (review.raw) {
+        log.debug(`Raw response: ${review.raw}`);
       }
-      log.warn("  No fix produced for this group");
-      const noFixMessage = parsedPlan.reason ?? "No fix plan from LLM";
-      results.push(createResult(repo, groupAlerts.length, "no-fix", null, noFixMessage));
+      results.push(
+        createResult(repo, groupAlerts.length, "no-fix", null, review.reason)
+      );
       continue;
     }
 
-    const plan = parsedPlan.plan;
-    const scopeError = validatePlanFileScope(plan.files, new Set(prefetchedFiles.keys()));
-    if (scopeError) {
-      log.error(`Unsafe fix plan: ${scopeError}`);
-      log.warn("  No fix produced for this group");
-      results.push(createResult(repo, groupAlerts.length, "no-fix", null, scopeError));
-      continue;
-    }
+    const plan = review.plan;
+    log.info(`  Fix plan: ${plan.files.length} file(s) to update`);
 
-    const validationError = validateFixPlan(plan, groupAlerts, prefetchedFiles);
-    if (validationError) {
-      log.error(`Unsafe fix plan: ${validationError}`);
-      log.warn("  No fix produced for this group");
-      results.push(createResult(repo, groupAlerts.length, "no-fix", null, validationError));
-      continue;
-    }
-
-    log.info(
-      `  Fix plan: ${plan.files.length} file(s) to update`
-    );
-
-    // Dry-run: just show what would happen
     if (config.dryRun) {
       for (const f of plan.files) {
         log.dryRun(`  Would update: ${f.path}`);
       }
-      for (const line of formatFixPlanSummary(summarizeFixPlan(plan, prefetchedFiles))) {
+      for (const line of formatFixPlanSummary(
+        summarizeFixPlan(plan, fetchedManifests)
+      )) {
         log.dryRun(`  ${line}`);
       }
       log.dryRun(`  PR title: ${plan.prTitle}`);
@@ -242,13 +245,11 @@ export async function runAgent(
       continue;
     }
 
-    // 4. Create branch, commit, and PR
     const branchName = createBranchName(manifest);
 
     try {
       await gh.createBranch(repo, branchName, baseSha);
-
-      const commitSha = await gh.commitFiles(
+      await gh.commitFiles(
         repo,
         branchName,
         plan.files,
@@ -266,48 +267,15 @@ export async function runAgent(
 
       log.success(`  PR created: ${pr.url}`);
 
-      // Optional: merge
-      if (config.merge || config.release || config.tag) {
-        const merged = await gh.mergePR(
+      results.push(
+        createResult(repo, groupAlerts.length, "success", {
           repo,
-          pr.number,
-          config.mergeMethod
-        );
-
-        if (merged) {
-          log.success("  PR merged");
-
-          // Get merge commit SHA for tagging
-          const mergeSha = await gh.getBranchSha(repo, defaultBranch);
-
-          if (config.tag) {
-            // Extract version from PR title if available
-            const versionMatch = plan.prTitle.match(
-              /\d+\.\d+\.\d+/
-            );
-            if (versionMatch) {
-              await gh.createTag(repo, versionMatch[0], mergeSha);
-              log.success(`  Tag created: ${versionMatch[0]}`);
-            }
-          }
-
-          if (config.release) {
-            const versionMatch = plan.prTitle.match(
-              /\d+\.\d+\.\d+/
-            );
-            if (versionMatch) {
-              const releaseUrl = await gh.createRelease(
-                repo,
-                versionMatch[0],
-                versionMatch[0]
-              );
-              log.success(`  Release created: ${releaseUrl}`);
-            }
-          }
-        }
-      }
-
-      results.push(createResult(repo, groupAlerts.length, "success", pr.url));
+          prNumber: pr.number,
+          prUrl: pr.url,
+          prTitle: plan.prTitle,
+          defaultBranch,
+        })
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`  Failed to create PR: ${msg}`);

@@ -3,14 +3,12 @@
  */
 
 import * as core from "@actions/core";
-import { GitHubClient } from "./core/github.js";
-import { createLlmClient } from "./core/llm.js";
-import { runAgent } from "./core/agent.js";
-import { normalizeConfig } from "./core/config.js";
-import {
-  collectOutcomeMessages,
-  summarizeAgentResults,
-} from "./core/result-summary.js";
+import { GitHubClient } from "./core/github.ts";
+import { createLlmClient } from "./core/llm.ts";
+import { runAgent } from "./core/agent.ts";
+import { runRepositoryLifecycle } from "./core/lifecycle.ts";
+import { normalizeConfig } from "./core/config.ts";
+import { buildRunReport } from "./core/run-report.ts";
 
 async function run(): Promise<void> {
   try {
@@ -47,46 +45,45 @@ async function run(): Promise<void> {
     );
 
     const results = await runAgent(gh, llm, config, repo);
+    const lifecycleFailures = await runRepositoryLifecycle(gh, config, results);
 
-    // Set outputs
-    const {
-      prsCreated,
-      totalAlerts: alertsFixed,
-      noFix,
-      budgetStops,
-      failed,
-    } = summarizeAgentResults(results);
-    const prUrls = results.filter((r) => r.prUrl).map((r) => r.prUrl!);
+    const report = buildRunReport(results, {
+      dryRun: config.dryRun,
+      lifecycleFailures,
+    });
+    const { prsCreated, totalAlerts, noFix, budgetStops, failed } =
+      report.counts;
 
     core.setOutput("prs-created", prsCreated);
-    core.setOutput("alerts-fixed", alertsFixed);
-    core.setOutput("pr-urls", JSON.stringify(prUrls));
+    core.setOutput("alerts-fixed", totalAlerts);
+    core.setOutput("pr-urls", JSON.stringify(report.prUrls));
 
     core.setOutput("no-fix", noFix);
     core.setOutput("budget-stops", budgetStops);
     core.setOutput("failed", failed);
-    core.setOutput(
-      "summary",
-      `Processed ${alertsFixed} alerts, created ${prsCreated} PRs, no-fix ${noFix}, budget-stops ${budgetStops}, failed ${failed}`
-    );
+    core.setOutput("summary", report.summary);
 
-    const noFixMessages = collectOutcomeMessages(results, "no-fix");
-    if (noFixMessages.length > 0) {
+    if (report.noFixMessages.length > 0) {
       core.warning(
-        `${noFixMessages.length} alert group(s) produced no fix: ${noFixMessages.join("; ")}`
+        `${report.noFixMessages.length} alert group(s) produced no fix: ${report.noFixMessages.join("; ")}`
       );
     }
 
-    const failures = collectOutcomeMessages(results, "failed");
-    if (failures.length > 0) {
+    if (report.failureMessages.length > 0) {
       core.warning(
-        `${failures.length} alert group(s) failed: ${failures.join("; ")}`
+        `${report.failureMessages.length} alert group(s) failed: ${report.failureMessages.join("; ")}`
       );
     }
 
     if (budgetStops > 0) {
       core.warning(
         `${budgetStops} alert group(s) stopped due to configured budget limits.`
+      );
+    }
+
+    if (report.lifecycleFailureMessages.length > 0) {
+      core.setFailed(
+        `Merge, tag or release failed after the pull request was created: ${report.lifecycleFailureMessages.join("; ")}`
       );
     }
   } catch (err) {

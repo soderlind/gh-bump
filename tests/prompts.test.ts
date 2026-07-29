@@ -43,6 +43,14 @@ test("SYSTEM_PROMPT forbids adding transitive packages as direct dependencies", 
   assert.match(SYSTEM_PROMPT, /return a skipped fix with a reason/);
 });
 
+test("SYSTEM_PROMPT names the exact package.json content boundary", () => {
+  assert.match(
+    SYSTEM_PROMPT,
+    /dependencies, devDependencies, optionalDependencies, peerDependencies, overrides, resolutions, pnpm\.overrides/
+  );
+  assert.doesNotMatch(SYSTEM_PROMPT, /pnpm\.patchedDependencies/);
+});
+
 test("buildAlertPrompt includes editable manifest contents", () => {
   const prompt = buildAlertPrompt(
     "owner/repo",

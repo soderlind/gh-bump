@@ -1,5 +1,9 @@
 # Context Map
 
+This map covers domain language and context boundaries. For the implementation
+map — components to file paths, flows, and invariants — see
+[docs/architecture.md](./docs/architecture.md).
+
 ## Contexts
 
 - [Security Remediation](./docs/contexts/security-remediation/CONTEXT.md) - analyzes dependency alerts and produces repository changes through pull requests.

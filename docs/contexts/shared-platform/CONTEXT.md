@@ -13,6 +13,10 @@ _Avoid_: business state, workflow type
 An execution mode that reports intended actions without applying external or local mutations.
 _Avoid_: preview context, simulated domain flow
 
+**Unattended Merge Mode**:
+An execution mode in which a run is configured to merge its own output, so no human reviews the change before it lands.
+_Avoid_: auto-merge, unsupervised run, headless mode
+
 **Dry-Run Non-Artifact Rule**:
 A rule that dry-run does not produce domain success or failure artifacts; it only emits execution previews.
 _Avoid_: dry-run success state, simulated failure artifact
@@ -44,3 +48,11 @@ _Avoid_: ambiguous precedence, last-event wins
 **Outcome Mapping Contract**:
 Bounded contexts may use context-specific outcome labels, but each label must map to shared-platform outcome classes for consistent aggregation and analytics.
 _Avoid_: unmapped labels, taxonomy drift
+
+**Repository Port**:
+The declared interface through which a context reaches a repository, satisfied by a live GitHub adapter in production and an in-memory adapter in tests.
+_Avoid_: GitHub client, API wrapper
+
+**Run Report**:
+The single aggregated view of a run's outcome counts, per-group lines, and exit code, which entrypoint adapters emit without re-deriving.
+_Avoid_: summary printer, per-adapter status output
