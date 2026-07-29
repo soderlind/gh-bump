@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-30
+
 ### Changed
 
 - Unattended merge runs now require a structurally verifiable manifest before planning; `package.json` fixes are admitted only when content outside the dependency and override allowlist is unchanged
