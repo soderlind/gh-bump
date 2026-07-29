@@ -61,12 +61,29 @@ export interface FixPlan {
 
 export type AgentOutcome = "success" | "no-fix" | "failed" | "budget-stop";
 
+/** Terminal Remediation Artifact: the reviewable pull request a run produced. */
+export interface RemediationArtifact {
+  repo: string;
+  prNumber: number;
+  prUrl: string;
+  prTitle: string;
+  defaultBranch: string;
+}
+
 export interface AgentResult {
   repo: string;
   alertsProcessed: number;
   prUrl: string | null;
   outcome: AgentOutcome;
   message: string | null;
+  artifact: RemediationArtifact | null;
+}
+
+/** A merge, tag or release step that failed after the pull request existed. */
+export interface LifecycleFailure {
+  repo: string;
+  prNumber: number;
+  message: string;
 }
 
 // ── Config ─────────────────────────────────────────────────────────

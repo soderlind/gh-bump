@@ -1,113 +1,300 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { runAgent } from "../src/core/agent.ts";
+import { InMemoryRepository } from "./support/in-memory-repository.ts";
 import {
-  createBranchName,
-  hasLlmCallBudget,
-  validatePlanFileScope,
-} from "../src/core/agent-safety.ts";
-import {
-  getEditableManifestPath,
-  groupAlertsByManifest,
-  resolveManifestFromLockfile,
-} from "../src/core/manifest.ts";
-import type { DependabotAlert } from "../src/core/types.ts";
+  createAlert,
+  createConfig,
+  createStubLlm,
+} from "./support/fixtures.ts";
 
-function createAlert(manifestPath: string, packageName: string): DependabotAlert {
-  return {
-    number: 1,
-    state: "open",
-    security_advisory: {
-      ghsa_id: "GHSA-test",
-      summary: `${packageName} vulnerability`,
-      severity: "high",
-      cve_id: null,
-    },
-    security_vulnerability: {
-      package: {
-        ecosystem: "npm",
-        name: packageName,
-      },
-      severity: "high",
-      vulnerable_version_range: "<1.0.1",
-      first_patched_version: { identifier: "1.0.1" },
-    },
-    dependency: {
-      package: {
-        ecosystem: "npm",
-        name: packageName,
-      },
-      manifest_path: manifestPath,
-      scope: "runtime",
-    },
-    html_url: "https://github.com/example/repo/security/dependabot/1",
-  };
+const PACKAGE_JSON = JSON.stringify(
+  { name: "app", version: "1.0.0", dependencies: { lodash: "4.17.19" } },
+  null,
+  2
+);
+
+function fixPlanResponse(content: Record<string, unknown>): string {
+  return JSON.stringify({
+    files: [{ path: "package.json", content }],
+    prTitle: "fix(deps): upgrade lodash to 4.17.21",
+    prBody: "Security fix.",
+    commitMessage: "fix(deps): upgrade lodash to 4.17.21",
+  });
 }
 
-test("resolveManifestFromLockfile maps lockfiles in root and subdirectories", () => {
-  assert.equal(resolveManifestFromLockfile("package-lock.json"), "package.json");
-  assert.equal(
-    resolveManifestFromLockfile("plugins/example/package-lock.json"),
-    "plugins/example/package.json"
+const PATCHED = {
+  name: "app",
+  version: "1.0.0",
+  dependencies: { lodash: "4.17.21" },
+};
+
+test("runAgent reports success with no artifact when there are no alerts", async () => {
+  const gh = new InMemoryRepository();
+  const results = await runAgent(
+    gh,
+    createStubLlm([""]),
+    createConfig(),
+    "example/repo"
   );
+
+  assert.deepEqual(results.map((r) => r.outcome), ["success"]);
+  assert.equal(results[0].artifact, null);
+  assert.equal(gh.pullRequests.length, 0);
 });
 
-test("getEditableManifestPath returns manifest paths unchanged", () => {
-  assert.equal(getEditableManifestPath("package.json"), "package.json");
-  assert.equal(getEditableManifestPath("composer.json"), "composer.json");
+test("runAgent commits the fix plan and returns a remediation artifact", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig(),
+    "example/repo"
+  );
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].outcome, "success");
+  assert.equal(results[0].prUrl, "https://github.com/example/repo/pull/1");
+  assert.deepEqual(results[0].artifact, {
+    repo: "example/repo",
+    prNumber: 1,
+    prUrl: "https://github.com/example/repo/pull/1",
+    prTitle: "fix(deps): upgrade lodash to 4.17.21",
+    defaultBranch: "main",
+  });
+
+  assert.equal(gh.commits.length, 1);
+  assert.deepEqual(
+    gh.commits[0].files.map((f) => f.path),
+    ["package.json"]
+  );
+  assert.match(gh.branches[0].name, /^gh-bump\/\d{4}-\d{2}-\d{2}\/package\.json-/);
 });
 
-test("groupAlertsByManifest groups lockfile alerts by editable manifest", () => {
-  const groups = groupAlertsByManifest([
-    createAlert("package-lock.json", "axios"),
-    createAlert("package.json", "lodash"),
+test("runAgent never merges — lifecycle is downstream", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig({ merge: true, release: true, tag: true }),
+    "example/repo"
+  );
+
+  assert.deepEqual(gh.mergedPrNumbers, []);
+  assert.deepEqual(gh.tags, []);
+  assert.deepEqual(gh.releases, []);
+});
+
+test("runAgent groups lockfile alerts onto the editable manifest", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [
+      createAlert("package-lock.json", "lodash", { number: 1 }),
+      createAlert("package.json", "lodash", { number: 2 }),
+    ],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig(),
+    "example/repo"
+  );
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].alertsProcessed, 2);
+});
+
+test("runAgent mutates nothing in dry-run mode", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig({ dryRun: true }),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "success");
+  assert.equal(results[0].artifact, null);
+  assert.deepEqual(gh.branches, []);
+  assert.deepEqual(gh.commits, []);
+  assert.deepEqual(gh.pullRequests, []);
+});
+
+test("runAgent skips unverifiable manifests before the LLM in unattended merge mode", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("Gemfile", "rack", { ecosystem: "bundler" })],
+    files: { Gemfile: 'gem "rack", "~> 3.0"' },
+  });
+  const llm = createStubLlm([new Error("must not be called")]);
+
+  const results = await runAgent(
+    gh,
+    llm,
+    createConfig({ merge: true }),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "no-fix");
+  assert.match(results[0].message ?? "", /Disable merging/);
+  assert.equal(llm.calls.length, 0);
+});
+
+test("runAgent keeps the unattended eligibility gate in dry-run mode", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("Gemfile", "rack", { ecosystem: "bundler" })],
+    files: { Gemfile: 'gem "rack", "~> 3.0"' },
+  });
+  const llm = createStubLlm([new Error("must not be called")]);
+
+  const results = await runAgent(
+    gh,
+    llm,
+    createConfig({ dryRun: true, merge: true }),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "no-fix");
+  assert.equal(llm.calls.length, 0);
+});
+
+test("runAgent plans unverifiable manifests when a human reviews the pull request", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("Gemfile", "rack", { ecosystem: "bundler" })],
+    files: { Gemfile: 'gem "rack", "~> 3.0"' },
+  });
+  const llm = createStubLlm([
+    JSON.stringify({
+      files: [{ path: "Gemfile", content: 'gem "rack", "~> 3.1"' }],
+      prTitle: "fix(deps): upgrade rack",
+      prBody: "Security fix.",
+      commitMessage: "fix(deps): upgrade rack",
+    }),
   ]);
-  const packageJsonAlerts = groups.get("package.json") ?? [];
 
-  assert.deepEqual([...groups.keys()], ["package.json"]);
-  assert.equal(packageJsonAlerts.length, 2);
+  const results = await runAgent(gh, llm, createConfig(), "example/repo");
+
+  assert.equal(results[0].outcome, "success");
+  assert.equal(llm.calls.length, 1);
+});
+
+test("runAgent classifies an out-of-scope fix plan as no-fix", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([
+      JSON.stringify({
+        files: [{ path: "src/index.ts", content: "// patched" }],
+        prTitle: "fix",
+        prBody: "fix",
+        commitMessage: "fix",
+      }),
+    ]),
+    createConfig(),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "no-fix");
+  assert.match(results[0].message ?? "", /outside fetched manifest set/);
+  assert.deepEqual(gh.pullRequests, []);
+});
+
+test("runAgent classifies an LLM failure as failed", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([new Error("provider unavailable")]),
+    createConfig(),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "failed");
+  assert.equal(results[0].message, "provider unavailable");
+});
+
+test("runAgent classifies pull-request creation failure as failed", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [createAlert("package.json", "lodash")],
+    files: { "package.json": PACKAGE_JSON },
+    failOnCreatePr: "PR already exists",
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig(),
+    "example/repo"
+  );
+
+  assert.equal(results[0].outcome, "failed");
+  assert.equal(results[0].message, "PR already exists");
+});
+
+test("runAgent stops the second group once the LLM call budget is spent", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [
+      createAlert("package.json", "lodash", { number: 1 }),
+      createAlert("api/package.json", "axios", { number: 2 }),
+    ],
+    files: {
+      "package.json": PACKAGE_JSON,
+      "api/package.json": PACKAGE_JSON,
+    },
+  });
+
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig({ maxLlmCalls: 1 }),
+    "example/repo"
+  );
+
   assert.deepEqual(
-    packageJsonAlerts.map((alert) => alert.dependency.manifest_path),
-    ["package.json", "package.json"]
+    results.map((r) => r.outcome),
+    ["success", "budget-stop"]
   );
-  assert.deepEqual(
-    packageJsonAlerts.map((alert) => alert.dependency.package.name),
-    ["axios", "lodash"]
-  );
+  assert.match(results[1].message ?? "", /Max LLM calls reached \(1\)/);
 });
 
-test("hasLlmCallBudget enforces configured call limits", () => {
-  assert.equal(hasLlmCallBudget(0, 1), true);
-  assert.equal(hasLlmCallBudget(1, 1), false);
-});
+test("runAgent honours the alert cap", async () => {
+  const gh = new InMemoryRepository({
+    alerts: [
+      createAlert("package.json", "lodash", { number: 1 }),
+      createAlert("api/package.json", "axios", { number: 2 }),
+    ],
+    files: {
+      "package.json": PACKAGE_JSON,
+      "api/package.json": PACKAGE_JSON,
+    },
+  });
 
-test("validatePlanFileScope rejects lockfile edits", () => {
-  const error = validatePlanFileScope(
-    [{ path: "package-lock.json" }],
-    new Set(["package.json"])
+  const results = await runAgent(
+    gh,
+    createStubLlm([fixPlanResponse(PATCHED)]),
+    createConfig({ maxAlerts: 1 }),
+    "example/repo"
   );
 
-  assert.match(error ?? "", /attempts to edit lockfile: package-lock\.json/);
-});
-
-test("validatePlanFileScope rejects edits outside fetched manifest files", () => {
-  const error = validatePlanFileScope(
-    [{ path: "src/index.ts" }],
-    new Set(["package.json"])
-  );
-
-  assert.match(error ?? "", /outside fetched manifest set: src\/index\.ts/);
-});
-
-test("validatePlanFileScope allows fetched manifest edits", () => {
-  assert.equal(
-    validatePlanFileScope([{ path: "package.json" }], new Set(["package.json"])),
-    null
-  );
-});
-
-test("createBranchName includes manifest slug and unique suffix", () => {
-  assert.equal(
-    createBranchName("plugins/example/package.json", 1_776_000_000_000),
-    "gh-bump/2026-04-12/plugins-example-package.json-mnvsjmdc"
-  );
+  assert.equal(results.length, 1);
+  assert.equal(results[0].alertsProcessed, 1);
 });

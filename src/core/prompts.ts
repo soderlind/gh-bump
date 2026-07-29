@@ -2,41 +2,18 @@
  * Prompt templates for the gh-bump agent.
  */
 
-import type { DependabotAlert } from "./types.js";
+import type { DependabotAlert } from "./types.ts";
+import {
+  DIRECT_DEPENDENCY_SECTIONS,
+  hasDirectDependency,
+  PACKAGE_JSON_MUTABLE_PATHS,
+  readPackageJson,
+} from "./manifest.ts";
 
-const DIRECT_DEPENDENCY_SECTIONS = [
-  "dependencies",
-  "devDependencies",
-  "optionalDependencies",
-  "peerDependencies",
-] as const;
-
-type PackageJson = Record<string, unknown>;
-
-function parsePackageJson(content: string | undefined): PackageJson | null {
-  if (!content) return null;
-  try {
-    const parsed = JSON.parse(content) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as PackageJson)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function hasDirectDependency(packageJson: PackageJson | null, packageName: string): boolean {
-  if (!packageJson) return false;
-  return DIRECT_DEPENDENCY_SECTIONS.some((sectionName) => {
-    const section = packageJson[sectionName];
-    return Boolean(
-      section &&
-        typeof section === "object" &&
-        !Array.isArray(section) &&
-        Object.prototype.hasOwnProperty.call(section, packageName)
-    );
-  });
-}
+const directDependencySections = DIRECT_DEPENDENCY_SECTIONS.join("/");
+const mutablePackageJsonPaths = PACKAGE_JSON_MUTABLE_PATHS.map((path) =>
+  path.join(".")
+).join(", ");
 
 export const SYSTEM_PROMPT = `You are a security dependency fix agent. Your job is to fix Dependabot security alerts in GitHub repositories by modifying the minimal set of files needed.
 
@@ -52,8 +29,9 @@ export const SYSTEM_PROMPT = `You are a security dependency fix agent. Your job 
 - **Minimal changes only**: Only modify what is needed to resolve the alert. Do not refactor, reformat, or add unrelated changes.
 - **Preserve formatting**: Match the existing indentation, trailing newlines, and style of each file.
 - **Manifest files only**: Update dependency version constraints in manifest files. Do NOT attempt to regenerate lockfiles (package-lock.json, yarn.lock, etc.) — the CI pipeline or Dependabot will handle that.
-- **Respect dependency intent**: If the vulnerable package is already a direct dependency in the manifest, update that existing direct dependency entry. If it is only transitive, do NOT add it to dependencies/devDependencies/optionalDependencies/peerDependencies just to force a version.
-- **Never add direct npm dependencies**: For package.json fixes, do not add new entries to dependencies, devDependencies, optionalDependencies, or peerDependencies. You may update versions for packages already present there, and you may add or merge overrides/resolutions as described below.
+- **Respect dependency intent**: If the vulnerable package is already a direct dependency in the manifest, update that existing direct dependency entry. If it is only transitive, do NOT add it to ${directDependencySections} just to force a version.
+- **Package.json content boundary**: Only these exact key paths may change: ${mutablePackageJsonPaths}. Every other key and value must remain unchanged.
+- **Never add direct npm dependencies**: For package.json fixes, do not add new entries to ${DIRECT_DEPENDENCY_SECTIONS.join(", ")}. You may update versions for packages already present there, and you may add or merge overrides/resolutions as described below.
 - **Transitive npm fixes**: For npm package.json files, prefer updating the top-level parent package that brings the vulnerable transitive dependency. If no safe parent update is clear, add or merge an npm "overrides" entry for the vulnerable transitive package and patched version. For Yarn use "resolutions" only when the manifest already indicates Yarn; for pnpm use "pnpm.overrides" only when the manifest already indicates pnpm.
 - **Skip unsafe transitive fixes**: If you cannot identify a safe parent update or appropriate package-manager override mechanism, return a skipped fix with a reason instead of adding direct dependencies that the project did not already declare.
 - **One fix at a time**: If multiple alerts affect the same file, batch them into a single file change.
@@ -103,7 +81,7 @@ export function buildAlertPrompt(
       const adv = a.security_advisory;
       const patched = vuln.first_patched_version?.identifier ?? "unknown";
       const packageJson = a.dependency.manifest_path.endsWith("package.json")
-        ? parsePackageJson(prefetchedFiles?.get(a.dependency.manifest_path))
+        ? readPackageJson(prefetchedFiles?.get(a.dependency.manifest_path))
         : null;
       const isDirectDependency = hasDirectDependency(packageJson, vuln.package.name);
       const dependencyKind = packageJson

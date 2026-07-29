@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Unattended merge runs now require a structurally verifiable manifest before planning; `package.json` fixes are admitted only when content outside the dependency and override allowlist is unchanged
+- Security Remediation now ends at the Terminal Remediation Artifact; merge, tag, and release moved to a separate repository lifecycle module (aligns the code with ADR-0001)
+- Fix Plan admission (parsing, scope boundary, npm direct-dependency rule) collapsed into a single `reviewFixPlan` interface, replacing `agent-safety.ts` and `fix-plan-validation.ts`
+- Repository access now goes through declared `RepositoryPort` / `LifecyclePort` interfaces, with `GitHubClient` as the production adapter and an in-memory adapter in tests
+- Run reporting consolidated into `run-report.ts`, shared by the CLI and GitHub Action adapters (replaces `result-summary.ts`)
+- `manifest.ts` now owns all `package.json` parsing and direct-dependency knowledge, removing three duplicate implementations and a duplicated lockfile pattern
+
+### Fixed
+
+- Alerts on manifests under a path containing "lock" (for example `blocks/package.json`) could never be fixed: the lockfile check matched the substring anywhere in the path, so the manifest was skipped and the model's correct fix was then rejected as an attempt to edit a lockfile. Lockfile detection now matches the file name only
+- A failing merge, tag, or release no longer discards the run report; the failure is recorded per pull request, the run continues, and created PRs are still counted and emitted as Action outputs
+- `npm test` only ran the acceptance suite because `tests/**/*.test.ts` collapses to `tests/*/*.test.ts` under `sh`; unit tests now run
+
+### Added
+
+- ADR-0002 records why content verification is required when human review is absent
+- Test coverage for `runAgent`, the repository lifecycle, Fix Plan admission, and run reporting
+- `docs/architecture.md`: component-to-path map, flows, invariants, and where common changes go
+
 ## [1.0.5] - 2026-06-23
 
 ### Documentation

@@ -11,15 +11,16 @@
  */
 
 import { parseArgs } from "node:util";
-import { GitHubClient } from "./core/github.js";
-import { createLlmClient } from "./core/llm.js";
-import { runAgent } from "./core/agent.js";
-import { findFullRunIncompatibleOptions } from "./core/cli-mode.js";
-import { normalizeConfig } from "./core/config.js";
-import { runLocalRelease } from "./core/local-release.js";
-import { summarizeAgentResults } from "./core/result-summary.js";
-import type { Config } from "./core/types.js";
-import * as log from "./core/log.js";
+import { GitHubClient } from "./core/github.ts";
+import { createLlmClient } from "./core/llm.ts";
+import { runAgent } from "./core/agent.ts";
+import { runRepositoryLifecycle } from "./core/lifecycle.ts";
+import { findFullRunIncompatibleOptions } from "./core/cli-mode.ts";
+import { normalizeConfig } from "./core/config.ts";
+import { runLocalRelease } from "./core/local-release.ts";
+import { buildRunReport } from "./core/run-report.ts";
+import type { Config } from "./core/types.ts";
+import * as log from "./core/log.ts";
 
 function showHelp(): void {
   console.log(`
@@ -190,46 +191,21 @@ async function main(): Promise<void> {
   );
 
   const results = await runAgent(gh, llm, config, config.repo!);
+  const lifecycleFailures = await runRepositoryLifecycle(gh, config, results);
 
-  // Summary
+  const report = buildRunReport(results, {
+    dryRun: config.dryRun,
+    lifecycleFailures,
+  });
+
   console.log();
   log.group("Summary");
-  const { prsCreated, failed, noFix, budgetStops, totalAlerts } =
-    summarizeAgentResults(results);
-
-  log.info(`Alerts processed: ${totalAlerts}`);
-  log.info(`PRs created:      ${prsCreated}`);
-  if (noFix > 0) log.warn(`No fix produced: ${noFix}`);
-  if (budgetStops > 0) log.warn(`Budget stops:    ${budgetStops}`);
-  if (failed > 0) log.warn(`Failed:           ${failed}`);
-
-  for (const r of results) {
-    if (r.prUrl) {
-      log.success(`  ${r.repo}: ${r.prUrl}`);
-      continue;
-    }
-
-    switch (r.outcome) {
-      case "failed":
-        log.error(`  ${r.repo}: ${r.message ?? "Unknown failure"}`);
-        break;
-      case "no-fix":
-        log.warn(`  ${r.repo}: ${r.message ?? "No fix produced"}`);
-        break;
-      case "budget-stop":
-        log.warn(`  ${r.repo}: ${r.message ?? "Budget limit reached"}`);
-        break;
-      default:
-        if (config.dryRun) {
-          log.info(`  ${r.repo}: dry-run completed`);
-        }
-        break;
-    }
+  for (const line of report.lines) {
+    log[line.level](line.text);
   }
   log.groupEnd();
 
-  // Exit with error code if any failures
-  if (failed > 0) process.exit(1);
+  if (report.exitCode !== 0) process.exit(report.exitCode);
 }
 
 main().catch((err) => {

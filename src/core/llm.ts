@@ -4,8 +4,8 @@
 
 import { generateText, type LanguageModel, type ToolSet } from "ai";
 import { writeFile } from "node:fs/promises";
-import type { AiProvider } from "./types.js";
-import * as log from "./log.js";
+import type { AiProvider } from "./types.ts";
+import * as log from "./log.ts";
 
 export interface LlmCallOptions {
   system: string;

@@ -22,27 +22,32 @@ Because the fix logic is driven by an LLM rather than hardcoded patterns, gh-bum
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ Entrypoint (CLI or GitHub Action)                                │
-│  src/cli.ts   — parses flags, resolves env vars                  │
+│  src/cli.ts    — parses flags, resolves env vars                 │
 │  src/action.ts — reads Action inputs via @actions/core           │
 └──────────────┬───────────────────────────────────────────────────┘
                │  Config
                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ Agent Loop  (src/core/agent.ts)                                  │
+│ Security Remediation  (src/core/agent.ts)                        │
 │  1. Fetch alerts                                                 │
-│  2. Group by manifest                                            │
-│  3. For each group → call LLM with tools → parse FixPlan         │
-│  4. Commit files, create PR, optionally merge/tag/release        │
-└────┬───────────────┬─────────────────────┬───────────────────────┘
-     │               │                     │
-     ▼               ▼                     ▼
-┌──────────┐  ┌────────────┐  ┌────────────────────────────────────┐
-│ GitHub   │  │ LLM Client │  │ Prompts (src/core/prompts.ts)      │
-│ Client   │  │ (llm.ts)   │  │  SYSTEM_PROMPT — agent persona     │
-│ (github  │  │  Vercel AI │  │  buildAlertPrompt() — alert detail │
-│  .ts)    │  │  SDK       │  └────────────────────────────────────┘
-└──────────┘  └────────────┘
+│  2. Group by editable manifest                                   │
+│  3. Per group → call LLM → reviewFixPlan() admits or rejects     │
+│  4. Commit files, create PR  ← the run's terminal artifact        │
+└──────────────┬───────────────────────────────────────────────────┘
+               │  AgentResult[]
+               ▼
+┌─────────────────────────────┐  ┌───────────────────────────────┐
+│ Lifecycle (core/lifecycle)  │  │ Report (core/run-report.ts)   │
+│  merge → tag → release      │  │  counts, lines, exit code     │
+└─────────────────────────────┘  └───────────────────────────────┘
+
+Both agent.ts and lifecycle.ts talk to RepositoryPort / LifecyclePort
+(src/core/repository.ts), implemented by GitHubClient in production and by an
+in-memory adapter in tests.
 ```
+
+See [docs/architecture.md](docs/architecture.md) for the full component map,
+invariants, and where common changes go.
 
 ### Step-by-step Execution
 
@@ -114,11 +119,15 @@ This is handled in `GitHubClient.commitFiles()`.
 
 #### 6. Merge / Tag / Release (optional)
 
-If `--merge` (or `--release` / `--tag`, which imply merge):
+Remediation itself stops at the pull request. If `--merge` (or `--release` /
+`--tag`, which imply merge) is set, `runRepositoryLifecycle()` in
+`src/core/lifecycle.ts` runs afterwards over the artifacts the run produced:
 
 - **Merge**: `GitHubClient.mergePR()` with the configured method (squash/merge/rebase).
 - **Tag**: Extracts a semver version from the PR title and creates a lightweight git tag.
 - **Release**: Creates a GitHub release with auto-generated release notes.
+
+Lifecycle never runs in dry-run mode.
 
 ### LLM Providers
 
@@ -376,19 +385,22 @@ src/
 ├── cli.ts              CLI entrypoint (parseArgs, env resolution)
 ├── action.ts           GitHub Action entrypoint (@actions/core)
 └── core/
-    ├── agent-safety.ts Agent safety helpers (branch names, edit scope, call budget)
-    ├── agent.ts        Agent loop (fetch → group → LLM → commit → PR)
+    ├── agent.ts        Security Remediation (fetch → group → LLM → commit → PR)
+    ├── cli-mode.ts     Flags --full-run refuses
     ├── config.ts       Shared CLI and Action config normalization
-    ├── fix-plan-summary.ts Dry-run FixPlan summary generation
     ├── fix-plan.ts     LLM FixPlan schema parsing
-    ├── fix-plan-validation.ts Deterministic FixPlan safety validation
-    ├── github.ts       GitHubClient (Octokit wrapper)
-    ├── local-release.ts Local npm full-run workflow
-    ├── manifest.ts     Lockfile-to-manifest mapping and alert grouping
+    ├── fix-plan-review.ts  Fix plan admission (scope + ecosystem rules)
+    ├── fix-plan-summary.ts Dry-run FixPlan summary generation
+    ├── github.ts       GitHubClient (Octokit adapter for both ports)
+    ├── lifecycle.ts    Downstream merge / tag / release
     ├── llm.ts          Provider-agnostic LLM client (Vercel AI SDK)
+    ├── local-release.ts Local npm full-run workflow
+    ├── log.ts          Structured logging with CI detection
+    ├── manifest.ts     Lockfile mapping, alert grouping, package.json reading
     ├── prompts.ts      System prompt + alert prompt builder
-    ├── types.ts        Shared TypeScript interfaces
-    └── log.ts          Structured logging with CI detection
+    ├── repository.ts   RepositoryPort / LifecyclePort interfaces
+    ├── run-report.ts   Run-level counts, lines, summary, exit code
+    └── types.ts        Shared TypeScript interfaces
 ```
 
 ## FAQ

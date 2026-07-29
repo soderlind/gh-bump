@@ -2,7 +2,7 @@
  * Config normalization for CLI and GitHub Action adapters.
  */
 
-import type { AiProvider, Config, MergeMethod, Severity } from "./types.js";
+import type { AiProvider, Config, MergeMethod, Severity } from "./types.ts";
 
 const AI_PROVIDERS = ["openai", "anthropic", "github"] as const;
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;

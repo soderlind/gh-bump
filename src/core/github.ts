@@ -12,10 +12,11 @@ import type {
   FileChange,
   MergeMethod,
   Severity,
-} from "./types.js";
-import * as log from "./log.js";
+} from "./types.ts";
+import type { LifecyclePort, RepositoryPort } from "./repository.ts";
+import * as log from "./log.ts";
 
-export class GitHubClient {
+export class GitHubClient implements RepositoryPort, LifecyclePort {
   private octokit: Octokit;
 
   constructor(token: string) {

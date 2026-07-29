@@ -1,4 +1,10 @@
-import type { FixPlan } from "./types.js";
+import type { FixPlan } from "./types.ts";
+import {
+  DIRECT_DEPENDENCY_SECTIONS,
+  dependencySection,
+  readPackageJson,
+  type PackageJson,
+} from "./manifest.ts";
 
 export interface DependencyVersionChange {
   name: string;
@@ -22,30 +28,6 @@ export interface FixPlanFileSummary {
   addedOverrides: DependencyAddition[];
   changedOverrides: DependencyVersionChange[];
   addedDirectDependencies: DirectDependencyAddition[];
-}
-
-type PackageJson = Record<string, unknown>;
-
-function parsePackageJson(content: string | undefined): PackageJson | null {
-  if (!content) return null;
-
-  try {
-    const parsed = JSON.parse(content) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as PackageJson)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function dependencySection(packageJson: PackageJson | null, section: string): Record<string, string> {
-  const value = packageJson?.[section];
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-
-  return value as Record<string, string>;
 }
 
 function formatDependencyValue(value: unknown): string {
@@ -89,14 +71,7 @@ function addedDirectDependencies(
   originalPackageJson: PackageJson | null,
   proposedPackageJson: PackageJson | null
 ): DirectDependencyAddition[] {
-  const sections = [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-  ];
-
-  return sections.flatMap((section) =>
+  return DIRECT_DEPENDENCY_SECTIONS.flatMap((section) =>
     addedDependencies(originalPackageJson, proposedPackageJson, section).map(
       (dependency) => ({ section, ...dependency })
     )
@@ -108,8 +83,8 @@ export function summarizeFixPlan(
   originalFiles: Map<string, string>
 ): FixPlanFileSummary[] {
   return plan.files.map((file) => {
-    const originalPackageJson = parsePackageJson(originalFiles.get(file.path));
-    const proposedPackageJson = parsePackageJson(file.content);
+    const originalPackageJson = readPackageJson(originalFiles.get(file.path));
+    const proposedPackageJson = readPackageJson(file.content);
 
     return {
       path: file.path,
